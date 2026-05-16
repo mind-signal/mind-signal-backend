@@ -14,7 +14,6 @@ import {
   SampleEnvelopeSchema,
   WavePowerSchema,
 } from '@07-shared/schemas/measurement-envelope.schema';
-import { Schema } from 'mongoose';
 import * as fs from 'fs';
 import * as path from 'path';
 
