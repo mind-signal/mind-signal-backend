@@ -21,6 +21,7 @@ export interface Session {
   stopReason: 'Natural' | 'ManualEarly' | 'HeadsetLost' | 'ProcessError' | null;
   measuredDurationSeconds: number | null;
   experimentMode: ExperimentMode; // 실험 모드 (DUAL | SEQUENTIAL | BTI | DUAL_2PC)
+  single_host_mode?: boolean; // 단일 호스트 모드 — 옵션 필드
 }
 
 /** 2. 인스턴스 메서드 타입 정의 */
@@ -100,6 +101,10 @@ const sessionSchema = new Schema<Session, SessionModel, SessionMethods>(
       enum: ['DUAL', 'SEQUENTIAL', 'BTI', 'DUAL_2PC'],
       required: true,
       default: 'DUAL',
+    },
+    // eslint-disable-next-line camelcase
+    single_host_mode: {
+      type: Boolean,
     },
   },
   {

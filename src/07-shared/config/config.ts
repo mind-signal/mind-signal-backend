@@ -81,6 +81,8 @@ export const config = {
   kakaoRedirectUri: process.env.KAKAO_REDIRECT_URI,
   // K phase 강제 페어링 admin allowlist — lowercase normalize됨
   adminEmails,
+  // Phase 18 프록시 샘플 정렬 위치 설정 — 'be' 또는 'proxy'
+  alignmentLocation: (process.env.ALIGNMENT_LOCATION ?? 'be') as 'be' | 'proxy',
   // Phase 16 DUAL_2PC 타임스탬프 정렬 설정 (optional — 기본값 사용 가능)
   dualPc: {
     // plan-review M-4: 편도 50ms + NTP skew 50ms = 200ms 기본값

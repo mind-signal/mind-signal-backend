@@ -1,5 +1,10 @@
 // src/02-processes/measurements/api/measurement.schema.ts
 import { z } from 'zod';
+export {
+  SampleEnvelopeSchema,
+  WavePowerSchema,
+  type SampleEnvelope,
+} from '@07-shared/schemas/measurement-envelope.schema';
 
 /** MongoDB ObjectId 정규식 패턴 — 24자리 16진수 문자열 검증 */
 const OBJECT_ID_REGEX = /^[0-9a-fA-F]{24}$/;
