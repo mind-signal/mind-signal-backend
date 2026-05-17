@@ -156,11 +156,12 @@ describe('BeLocalAligner — timestampAlignerRegistry 위임 검증', () => {
     aligner.ingest(envelope);
 
     // Assert — subject_idx=1 → registry에 1 그대로 전달됨 (+1/-1 변환 없음)
+    // 4번째 인자는 proxy_ingress_ts_ns decimal-string (Phase 18 ADR §A T1-BE-H)
     expect(timestampAlignerRegistry.ingest).toHaveBeenCalledWith(
       'grp-be',
       1,
       envelope.payload,
-      expect.any(Number)
+      envelope.proxy_ingress_ts_ns
     );
   });
 
@@ -171,11 +172,12 @@ describe('BeLocalAligner — timestampAlignerRegistry 위임 검증', () => {
     aligner.ingest(envelope);
 
     // Assert — subject_idx=2 → registry에 2 그대로 전달됨 (+1/-1 변환 없음)
+    // 4번째 인자는 proxy_ingress_ts_ns decimal-string (Phase 18 ADR §A T1-BE-H)
     expect(timestampAlignerRegistry.ingest).toHaveBeenCalledWith(
       'grp-be',
       2,
       envelope.payload,
-      expect.any(Number)
+      envelope.proxy_ingress_ts_ns
     );
   });
 

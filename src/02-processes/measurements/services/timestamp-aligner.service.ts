@@ -1,8 +1,8 @@
 /**
  * timestamp-aligner.service.ts
  *
- * 두 subject EEG 샘플을 서버 ingest 타임스탬프 기준으로 정렬하는
- * 모듈 레벨 레지스트리 (Phase 16 Wave 1 skeleton → Wave 2 본 구현).
+ * 두 subject EEG 샘플을 proxy_ingress_ts_ns(decimal-string 나노초) 기준으로
+ * 정렬하는 모듈 레벨 레지스트리 (Phase 16 Wave 1 skeleton → Phase 18 Wave 2 본 구현).
  *
  * flush 호출 주체 (v9 R9-H-2): subscribeWithAligner(groupId) 내부
  * setInterval(() => timestampAlignerRegistry.flush(groupId), 100) 기동,
@@ -42,9 +42,9 @@ export interface AlignedSample {
 // Internal class
 // ---------------------------------------------------------------------------
 
-/** 버퍼 엔트리 타입 */
+/** 버퍼 엔트리 타입 — proxyIngressTsNs(decimal-string 나노초) 기반 (Phase 18 ADR §A) */
 interface BufferEntry {
-  ts: number;
+  proxyIngressTsNs: string;
   sample: WavePower;
 }
 
@@ -71,56 +71,69 @@ class TimestampAligner {
    *
    * @param subjectIndex - 1 또는 2 (1-based)
    * @param sample - EEG 주파수 대역 파워 값
-   * @param serverTimestamp - BE ingest 시각 (Date.now())
+   * @param proxyIngressTsNs - 프록시 ingest 나노초 타임스탬프 (decimal-string, Phase 18 ADR §A)
    */
   ingest(
     subjectIndex: number,
     sample: WavePower,
-    serverTimestamp: number
+    proxyIngressTsNs: string
   ): void {
     if (!this.buffer.has(subjectIndex)) {
       this.buffer.set(subjectIndex, []);
     }
-    this.buffer.get(subjectIndex)!.push({ ts: serverTimestamp, sample });
+    this.buffer.get(subjectIndex)!.push({ proxyIngressTsNs, sample });
   }
 
   /**
    * 버퍼 스캔 후 정렬 가능한 쌍 생성 + Socket.io 전송 + 만료 항목 drop 수행함.
    *
-   * - |ts_1 - ts_2| ≤ toleranceMs 인 쌍 생성
+   * - |proxyIngressTsNs_1 - proxyIngressTsNs_2| ≤ toleranceMs (ns BigInt 직접 비교) 인 쌍 생성
    * - AlignedSample.subject_1 / subject_2 필드로 매핑 (1-based)
-   * - 매칭 실패 샘플은 Date.now() - ts > 500ms 시 drop (timestamp_min-aged)
+   * - 매칭 실패 샘플은 nowNs - proxyIngressTsNs > 500ms 시 drop (BigInt ns 기반, R4-8)
    * - 정렬된 쌍은 SocketService.emitToGroup(groupId, 'aligned_pair', alignedSample) 전송
+   * - Number() 변환 금지 (CX4-4 LOCK — >2^53 정밀도 손실 방지, BigInt 직접 비교 의무)
    *
    * @returns 정렬된 AlignedSample 배열
    */
   flush(): AlignedSample[] {
-    const now = Date.now();
-    const expireThresholdMs = 500;
+    // nowNs: BigInt 나노초 기준 현재 시각 (만료 판정에 사용)
+    const nowNs = BigInt(Date.now()) * 1_000_000n;
+    const expireThresholdNs = 500n * 1_000_000n; // 500ms → ns
     const aligned: AlignedSample[] = [];
 
     const buf1 = this.buffer.get(1) ?? [];
     const buf2 = this.buffer.get(2) ?? [];
 
-    // 만료 항목 drop — 매칭 실패 샘플 Date.now() - ts > 500ms 시 제거
-    const fresh1 = buf1.filter((e) => now - e.ts <= expireThresholdMs);
-    const fresh2 = buf2.filter((e) => now - e.ts <= expireThresholdMs);
+    // 만료 항목 drop — nowNs - proxyIngressTsNs > 500ms 시 제거 (R4-8, BigInt ns 기반)
+    const fresh1 = buf1.filter(
+      (e) => nowNs - BigInt(e.proxyIngressTsNs) <= expireThresholdNs
+    );
+    const fresh2 = buf2.filter(
+      (e) => nowNs - BigInt(e.proxyIngressTsNs) <= expireThresholdNs
+    );
 
     // 그리디 매칭: buf1 각 항목에 대해 toleranceMs 내 buf2 최근접 항목 탐색
+    // BigInt ns 직접 비교 (CX4-4 LOCK — Number() 변환 금지)
     // 매칭 여부를 인덱스로 추적하여 버퍼 업데이트에 활용함
     const usedIdx1 = new Set<number>();
     const usedIdx2 = new Set<number>();
+    const toleranceNs = BigInt(this.toleranceMs) * 1_000_000n;
 
     for (let i1 = 0; i1 < fresh1.length; i1++) {
       const entry1 = fresh1[i1];
       let bestIdx = -1;
-      let bestDiff = Infinity;
+      let bestDiff = -1n; // BigInt sentinel (-1 = not set)
 
       for (let i = 0; i < fresh2.length; i++) {
         if (usedIdx2.has(i)) continue;
-        const diff = Math.abs(entry1.ts - fresh2[i].ts);
-        if (diff <= this.toleranceMs && diff < bestDiff) {
-          bestDiff = diff;
+        // BigInt ns 절댓값 차이 계산 (CX4-4: Number() 변환 금지)
+        const absDelta = (() => {
+          const a = BigInt(entry1.proxyIngressTsNs);
+          const b = BigInt(fresh2[i].proxyIngressTsNs);
+          return a >= b ? a - b : b - a;
+        })();
+        if (absDelta <= toleranceNs && (bestDiff < 0n || absDelta < bestDiff)) {
+          bestDiff = absDelta;
           bestIdx = i;
         }
       }
@@ -129,8 +142,10 @@ class TimestampAligner {
         usedIdx1.add(i1);
         usedIdx2.add(bestIdx);
         const entry2 = fresh2[bestIdx];
-        // 두 타임스탬프의 평균을 aligned timestamp로 사용함
-        const alignedTs = Math.round((entry1.ts + entry2.ts) / 2);
+        // 두 proxyIngressTsNs BigInt 평균 → ms 변환하여 aligned timestamp 생성함
+        const ns1 = BigInt(entry1.proxyIngressTsNs);
+        const ns2 = BigInt(entry2.proxyIngressTsNs);
+        const alignedTs = Number((ns1 + ns2) / 2n / 1_000_000n);
         // snake_case 필드명은 FE Socket.io 페이로드 계약 — eslint-disable 필수
         /* eslint-disable camelcase */
         const sample: AlignedSample = {
@@ -190,17 +205,17 @@ export const timestampAlignerRegistry = {
    * @param groupId - 실험 그룹 ID
    * @param subjectIndex - 1 또는 2 (1-based)
    * @param sample - EEG 주파수 대역 파워 값
-   * @param serverTimestamp - BE ingest 시각 (Date.now())
+   * @param proxyIngressTsNs - 프록시 ingest 나노초 타임스탬프 (decimal-string, Phase 18 ADR §A)
    */
   ingest(
     groupId: string,
     subjectIndex: number,
     sample: WavePower,
-    serverTimestamp: number
+    proxyIngressTsNs: string
   ): void {
     const aligner = registry.get(groupId);
     if (!aligner) return; // aligner 미생성 시 무시함 (race condition 방어)
-    aligner.ingest(subjectIndex, sample, serverTimestamp);
+    aligner.ingest(subjectIndex, sample, proxyIngressTsNs);
   },
 
   /**

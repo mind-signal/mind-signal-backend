@@ -63,7 +63,8 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
         if (parsed.type !== 'brain_sync_all') return;
         // waves 필드 → WavePower 추출 (core/streamer.py L266-277 payload 구조 기준)
         const sample: WavePower = parsed.waves;
-        const serverTimestamp = Date.now();
+        // 과도기 ns 브리지 — T1-BE-J에서 이 legacy Redis 경로(L67-72) 전체 삭제 예정 (R4-7)
+        const serverTimestamp = String(BigInt(Date.now()) * 1_000_000n);
         timestampAlignerRegistry.ingest(
           groupId,
           subjectIndex,
