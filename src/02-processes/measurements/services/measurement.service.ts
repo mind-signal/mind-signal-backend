@@ -185,6 +185,14 @@ function startDualMeasurement(groupId: string): void {
       ]);
       // ▲ 신규
 
+      // 두 subject session을 MEASURING 전이함 (ADR §B — 구조적 차단 수정)
+      // R4-6: filter status:'PAIRED' ONLY — canTransitionTo는 PAIRED→MEASURING만
+      // 유효함 (session.schema.ts L147-149 실측: CREATED→MEASURING 불가)
+      await Session.updateMany(
+        { groupId, status: 'PAIRED' },
+        { status: 'MEASURING', measuredAt: new Date() }
+      );
+
       // aligner registry에 인스턴스 생성
       timestampAlignerRegistry.getOrCreate(
         groupId,

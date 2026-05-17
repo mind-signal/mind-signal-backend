@@ -191,6 +191,38 @@ describe('startDualMeasurement 런타임 streamStart 호출 검증', () => {
     );
   });
 
+  it('startDualMeasurement 성공 경로에서 PAIRED 세션을 MEASURING 전이함 (ADR §B)', async () => {
+    // Arrange — happy-path 테스트와 동일 셋업 (registerDual 양쪽 + findById mock + streamStart 성공)
+    (Session.findById as jest.Mock).mockResolvedValue(
+      makeDualSession(GROUP_ID)
+    );
+
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      2,
+      'http://de2:5002',
+      ENGINE_SECRET
+    );
+
+    // Act — fire-and-forget 비동기 진입
+    await startMeasurementService('session-id-001');
+
+    // fire-and-forget 내부 async IIFE 완료 대기
+    await new Promise<void>((r) => setTimeout(r, 200));
+
+    // Assert — R4-6: filter는 PAIRED ONLY, update는 MEASURING + measuredAt
+    expect(Session.updateMany as jest.Mock).toHaveBeenCalledWith(
+      { groupId: GROUP_ID, status: 'PAIRED' },
+      { status: 'MEASURING', measuredAt: expect.any(Date) }
+    );
+  });
+
   it('streamStartDual 한쪽 실패 시 dual-session-failed 이벤트 emit됨', async () => {
     // Arrange — Session.findById mock 설정
     (Session.findById as jest.Mock).mockResolvedValue(
