@@ -83,6 +83,8 @@ export const config = {
   adminEmails,
   // Phase 18 프록시 샘플 정렬 위치 설정 — 'be' 또는 'proxy'
   alignmentLocation: (process.env.ALIGNMENT_LOCATION ?? 'be') as 'be' | 'proxy',
+  // Phase 18 프록시 base URL — Stage 1 빈 문자열(비활성), Stage 2에서 설정함
+  proxyUrl: process.env.PROXY_URL || '',
   // Phase 16 DUAL_2PC 타임스탬프 정렬 설정 (optional — 기본값 사용 가능)
   dualPc: {
     // plan-review M-4: 편도 50ms + NTP skew 50ms = 200ms 기본값
@@ -94,6 +96,11 @@ export const config = {
     ),
     // CX4-1: aligner flush loop 주기 — pairedWindow 단위로 정렬 버퍼 방출함
     pairedWindowMs: Number(process.env.PAIRED_WINDOW_MS ?? 100),
+  },
+  // Phase 18 프록시 /health 폴링 fail-closed 설정 (R2-2 LOCK)
+  proxyHealth: {
+    pollIntervalMs: Number(process.env.PROXY_HEALTH_POLL_INTERVAL_MS ?? 1000),
+    failCount: Number(process.env.PROXY_HEALTH_FAIL_COUNT ?? 3),
   },
 } as const; // 읽기 전용으로 설정
 

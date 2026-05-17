@@ -1,5 +1,7 @@
 import { config } from '@07-shared/config/config';
 import { AppError } from '@07-shared/errors';
+import { Session } from '@06-entities/sessions';
+import { SocketService } from '@07-shared/lib/socket';
 
 // ===== legacy 단일 slot — 1PC / SEQUENTIAL 경로 호환 =====
 // 메모리 저장소 (서버 재시작 시 파이썬 엔진이 재등록해야 함)
@@ -30,6 +32,53 @@ const pendingRegistry = new Map<1 | 2, PendingEntry>();
 
 /** group-level fail-closed ns 기록 — T1-BE-F가 채움, T1-BE-G gate가 조회함 */
 const failClosedAtNsByGroup = new Map<string, bigint>();
+
+// ===== T1-BE-F: proxy /health 폴링 fail-closed 프로듀서 =====
+/** groupId → setInterval 핸들 — 폴링 인터벌 관리용 */
+const proxyHealthIntervals = new Map<string, NodeJS.Timeout>();
+
+/** groupId → 연속 실패 횟수 — fail-closed 임계값 비교용 */
+const proxyHealthFailCounts = new Map<string, number>();
+
+/**
+ * fail-closed 발동 내부 헬퍼 — Map.set → emit → updateMany 순서로 처리함.
+ * Map.set이 먼저 실행되어 emit/updateMany 오류 시에도 gate 보호됨.
+ *
+ * @param groupId - fail-closed 발동 대상 그룹 ID
+ */
+async function triggerFailClosed(groupId: string): Promise<void> {
+  // 중복 발동 방지 — 이미 fail-closed set된 그룹은 재진입 차단함 (느린 fetch 중첩 tick 가드, T1-DE-C _fail_closed_triggered 패턴 정합)
+  if (failClosedAtNsByGroup.has(groupId)) return;
+  // Map.set 먼저 — emit/updateMany 오류에도 gate 보호됨
+  failClosedAtNsByGroup.set(groupId, BigInt(Date.now()) * 1_000_000n);
+  console.log(`proxy /health fail-closed 발동 완료: groupId=${groupId}`);
+
+  try {
+    // ADR-010 §D: dual-session-failed 이벤트 emit — measurement.service.ts L216 패턴 동일
+    SocketService.emitToGroup(groupId, 'dual-session-failed', {
+      groupId,
+      error: 'proxy_health_fail_closed',
+    });
+  } catch (err) {
+    console.error(
+      `dual-session-failed emit 오류 처리함: groupId=${groupId}`,
+      err
+    );
+  }
+
+  try {
+    // ADR-010 §D: 세션 CANCELLED 전이 — measurement.service.ts L221-224 패턴 동일
+    await Session.updateMany(
+      { groupId },
+      { status: 'CANCELLED', stopReason: 'ProcessError' }
+    );
+  } catch (err) {
+    console.error(
+      `Session.updateMany CANCELLED 오류 처리함: groupId=${groupId}`,
+      err
+    );
+  }
+}
 
 export const engineRegistryService = {
   // ===== 기존 메서드 — backward compat 유지 (engine-proxy.service.ts 5곳 호출 보존) =====
@@ -93,6 +142,12 @@ export const engineRegistryService = {
 
     // 등록 콜백 전부 invoke — waitForBothEngines EventEmitter 패턴 지원
     registeredCallbacks.get(groupId)?.forEach((cb) => cb());
+
+    // 양쪽 DE 등록 완료 시 proxy /health 폴링 시작함 (T1-BE-F)
+    // poll 수명 ⊆ group 등록 수명 — cleanupGroup에서 stopProxyHealthPoll 짝 호출
+    if (engineRegistryService.isFullyRegistered(groupId)) {
+      engineRegistryService.startProxyHealthPoll(groupId);
+    }
   },
 
   /**
@@ -171,12 +226,86 @@ export const engineRegistryService = {
   },
 
   /**
+   * proxy /health 폴링을 시작함 (T1-BE-F ADR-010 §D 프로듀서).
+   * config.proxyUrl 빈 값이면 no-op — Stage-1 be-mode 무행위변경 보장함.
+   * 이미 폴링 중이면 idempotent 반환함.
+   *
+   * @param groupId - 폴링 대상 그룹 ID
+   */
+  startProxyHealthPoll(groupId: string): void {
+    // Stage-1 안전 게이트 — proxyUrl 미설정 시 no-op (5/26 시연 / dev-only / ADR §E 회귀 보존)
+    if (!config.proxyUrl) {
+      return;
+    }
+
+    // 중복 폴링 방지 — idempotent
+    if (proxyHealthIntervals.has(groupId)) {
+      return;
+    }
+
+    // 연속 실패 카운터 초기화함
+    proxyHealthFailCounts.set(groupId, 0);
+
+    // setInterval 폴링 시작 — fetch 전역 함수 사용 (repo convention)
+    const handle = setInterval(() => {
+      void (async () => {
+        try {
+          const res = await fetch(`${config.proxyUrl}/health`);
+          if (res.ok) {
+            // 성공: 카운터 리셋함
+            proxyHealthFailCounts.set(groupId, 0);
+          } else {
+            // 비정상 HTTP 응답: 실패 카운터 증가 처리함
+            const count = (proxyHealthFailCounts.get(groupId) ?? 0) + 1;
+            proxyHealthFailCounts.set(groupId, count);
+            if (count >= config.proxyHealth.failCount) {
+              // 임계값 도달 — fail-closed 발동 후 폴링 중단 (one-shot 보장)
+              await triggerFailClosed(groupId);
+              engineRegistryService.stopProxyHealthPoll(groupId);
+            }
+          }
+        } catch {
+          // 네트워크/타임아웃 오류: 실패 카운터 증가 처리함
+          const count = (proxyHealthFailCounts.get(groupId) ?? 0) + 1;
+          proxyHealthFailCounts.set(groupId, count);
+          if (count >= config.proxyHealth.failCount) {
+            // 임계값 도달 — fail-closed 발동 후 폴링 중단 (one-shot 보장)
+            await triggerFailClosed(groupId);
+            engineRegistryService.stopProxyHealthPoll(groupId);
+          }
+        }
+      })();
+    }, config.proxyHealth.pollIntervalMs);
+
+    // Node.js/Jest 프로세스 종료를 블록하지 않도록 unref 처리함 (repo 패턴 준수)
+    handle.unref();
+    proxyHealthIntervals.set(groupId, handle);
+  },
+
+  /**
+   * proxy /health 폴링을 중단하고 관련 상태 제거함.
+   * idempotent — 폴링 중이 아닐 때 호출해도 안전함.
+   *
+   * @param groupId - 폴링 중단 대상 그룹 ID
+   */
+  stopProxyHealthPoll(groupId: string): void {
+    const handle = proxyHealthIntervals.get(groupId);
+    if (handle !== undefined) {
+      clearInterval(handle);
+      proxyHealthIntervals.delete(groupId);
+    }
+    proxyHealthFailCounts.delete(groupId);
+  },
+
+  /**
    * groupId에 해당하는 DUAL_2PC 등록 데이터 및 콜백 전부 제거함.
    * stopMeasurement DUAL_2PC 분기에서 호출됨.
    *
    * @param groupId - 제거할 그룹 ID
    */
   cleanupGroup(groupId: string): void {
+    // proxy /health 폴링 중단 및 상태 제거함
+    engineRegistryService.stopProxyHealthPoll(groupId);
     dualRegistry.delete(groupId);
     registeredCallbacks.delete(groupId);
     // CX4-5: T1-BE-G가 추가한 failClosed Map의 소비 cleanup — T1-BE-F .set과 짝
