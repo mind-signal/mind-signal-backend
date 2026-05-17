@@ -158,6 +158,87 @@ class ConflictError extends Error {
 // ===== 내부 헬퍼 =====
 
 /**
+ * proxy 모드 시 단일 Proxy 엔드포인트로 /control/assign-group POST 처리함.
+ * callWithRetry와 동일한 retry/backoff/abort/timeout 규율 적용함.
+ * 4xx non-retryable / 409 conflict / 5xx retryable 분류 동일 처리함.
+ *
+ * @param groupId - 실험 그룹 ID
+ * @param parentSignal - inFlightControllers abort signal
+ */
+async function callProxyAssignGroup(
+  groupId: string,
+  parentSignal: AbortSignal
+): Promise<void> {
+  for (let attempt = 1; attempt <= RETRY_COUNT; attempt++) {
+    // attempts 카운터 증가 (statusCache 반드시 존재 — triggerAssignGroup에서 초기화됨)
+    const cached = statusCache.get(groupId);
+    if (cached) cached.attempts++;
+
+    try {
+      // per-attempt timeout + parent abort 결합 (LD-19, LD-21 — Node 20.3+ 필요)
+      const signal = AbortSignal.any([
+        parentSignal,
+        AbortSignal.timeout(PER_ATTEMPT_TIMEOUT_MS),
+      ]);
+
+      // proxy 모드 시 단일 Proxy 엔드포인트로 POST 처리함
+      const res = await fetch(`${config.proxyUrl}/control/assign-group`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Engine-Secret': config.dataEngine.secretKey,
+        },
+        // eslint-disable-next-line camelcase
+        body: JSON.stringify({ group_id: groupId }),
+        signal,
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      // Proxy 200 = 양쪽 DE 할당 완료 — success 반환함
+      if (res.ok) {
+        return;
+      }
+
+      // 비-200 분기: LD-14 분류와 동일 처리 보존함
+      const errBody = data as Record<string, unknown>;
+      const errCode =
+        (errBody?.detail as Record<string, unknown>)?.error ?? 'unknown';
+
+      // 401 / 400 → non-retryable, 즉시 throw
+      if (res.status === 401 || res.status === 400) {
+        throw new NonRetryableError(String(errCode), res.status);
+      }
+      // 409 → conflict, non-retryable
+      if (res.status === 409) {
+        const current =
+          (errBody?.detail as Record<string, unknown>)?.current ?? undefined;
+        throw new ConflictError(
+          String(errCode),
+          current !== undefined ? String(current) : undefined
+        );
+      }
+      // 5xx 기타 → retryable
+      throw new Error(`Proxy ${res.status}: ${JSON.stringify(data)}`);
+    } catch (err) {
+      // NonRetryableError / ConflictError → retry 안 함, 즉시 상위로 전파
+      if (err instanceof NonRetryableError || err instanceof ConflictError) {
+        throw err;
+      }
+      // AbortError (parent abort) → 즉시 전파, retry 안 함
+      if ((err as Error).name === 'AbortError' && parentSignal.aborted) {
+        throw err;
+      }
+      // 마지막 attempt → 전파
+      if (attempt === RETRY_COUNT) throw err;
+      // backoff 후 재시도
+      const delay = Math.min(RETRY_BASE_MS * 2 ** (attempt - 1), RETRY_CAP_MS);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
+/**
  * 단일 DE에 /control/assign-group POST 호출 + 3회 retry 처리함.
  * LD-14 분기: 4xx non-retryable, 5xx retryable, 200 already_registered 보상 등록함.
  *
@@ -287,10 +368,25 @@ export const dualTriggerService: DualTriggerService = {
     });
 
     try {
-      // 3. Promise.allSettled — 부분 성공 처리 (LD-3, LD-24)
-      const results = await Promise.allSettled(
-        subjects.map((s) => callWithRetry(s, controller.signal))
-      );
+      // 3. 모드 분기 — proxy 모드 시 단일 Proxy, be 모드 시 per-DE 루프 보존함
+      let results: PromiseSettledResult<void>[];
+      if (config.proxyUrl) {
+        // proxy 모드: 단일 Proxy 엔드포인트로 POST 처리함 (Proxy가 DE 팬아웃 담당)
+        // fulfilled 1개 = 양쪽 DE 할당 완료, rejected 1개 = 전체 실패로 흐름 보존함
+        const proxyResult = await Promise.allSettled([
+          callProxyAssignGroup(groupId, controller.signal),
+        ]);
+        // be-mode 결과 형식 호환: subjects 수에 관계없이 2-slot 결과로 래핑함
+        // → 기존 success/failure accounting(successCount === subjects.length) 호환 보존함
+        // 두 슬롯은 동일 settled 참조 — proxy 호출은 원자적 처리임
+        // (fulfilled → 양쪽 DE 할당 완료, rejected → e0/e1 동일하여 both_failed 정확히 결정됨)
+        results = [proxyResult[0]!, proxyResult[0]!];
+      } else {
+        // be 모드: per-DE 직접 루프 — 바이트 동일 보존함 (Stage-1 no-op gate)
+        results = await Promise.allSettled(
+          subjects.map((s) => callWithRetry(s, controller.signal))
+        );
+      }
 
       const successCount = results.filter(
         (r) => r.status === 'fulfilled'

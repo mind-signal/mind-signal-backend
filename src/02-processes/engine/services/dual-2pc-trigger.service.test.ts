@@ -16,12 +16,14 @@
  *   T-BE-12: registerPairingTriggerListener 2회 호출 idempotent
  */
 
-// ===== config mock — 시크릿 키 주입 =====
-jest.mock('@07-shared/config/config', () => ({
+// ===== config mock — 가변 객체로 proxyUrl 런타임 주입 지원함 =====
+const mockConfigObj = {
   config: {
     dataEngine: { secretKey: 'valid-secret' },
+    proxyUrl: '' as string,
   },
-}));
+};
+jest.mock('@07-shared/config/config', () => mockConfigObj);
 
 // ===== SocketService mock =====
 jest.mock('@07-shared/lib/socket', () => ({
@@ -38,6 +40,13 @@ jest.mock('@06-entities/sessions', () => ({
 }));
 
 // ===== 전역 fetch mock =====
+// mockFetch 수명 주기 불변식:
+//   - 첫 번째 describe beforeEach가 각 테스트 전 mockFetch.mockReset() 호출함
+//   - jest.resetModules() 패턴 테스트(TS-1~TS-6 / T-BE-6 / T-BE-12)는
+//     maybeTriggerDualAssignGroup 내부에서 조기 return하여 fetch에 도달하지 않음
+//     → 공유 mockFetch 상태를 관찰하지 않으므로 격리 보장됨
+//   - global.fetch = originalFetch 원복은 파일 레벨 afterAll 단 1회 수행함
+//     (두 describe 모두 완료 후 실행 — T-BE-E 테스트까지 mock 유효 보장함)
 const originalFetch = global.fetch;
 const mockFetch = jest.fn();
 global.fetch = mockFetch;
@@ -83,12 +92,8 @@ describe('dualTriggerService — Phase 17.6', () => {
     // 모듈 상태 격리 — 각 테스트마다 fresh module
     jest.resetModules();
 
-    // config mock 재등록
-    jest.mock('@07-shared/config/config', () => ({
-      config: {
-        dataEngine: { secretKey: 'valid-secret' },
-      },
-    }));
+    // be 모드 — proxyUrl 비활성 보장 (Stage-1 기본값 보존함)
+    mockConfigObj.config.proxyUrl = '';
 
     // SocketService mock 재등록
     jest.mock('@07-shared/lib/socket', () => ({
@@ -117,11 +122,6 @@ describe('dualTriggerService — Phase 17.6', () => {
   afterEach(() => {
     jest.clearAllMocks();
     jest.clearAllTimers();
-  });
-
-  afterAll(() => {
-    // 전역 fetch 원복 — 테스트 파일 간 상태 누수 방지함
-    global.fetch = originalFetch;
   });
 
   // ============================================================
@@ -255,9 +255,7 @@ describe('dualTriggerService — Phase 17.6', () => {
   it('T-BE-6: maybeTriggerDualAssignGroup — 3조건 충족 시 자동 trigger 호출됨', async () => {
     // RC5-H-2 fix: jest.resetModules() 이후 re-import
     jest.resetModules();
-    jest.mock('@07-shared/config/config', () => ({
-      config: { dataEngine: { secretKey: 'valid-secret' } },
-    }));
+    // mockConfigObj proxyUrl은 beforeEach에서 '' 로 리셋됨 — 재등록 불필요함
     jest.mock('@07-shared/lib/socket', () => ({
       SocketService: { emitToGroup: jest.fn() },
     }));
@@ -451,9 +449,7 @@ describe('dualTriggerService — Phase 17.6', () => {
 
   it('T-BE-12: registerPairingTriggerListener 2회 호출 시 2번째는 false 반환됨', async () => {
     jest.resetModules();
-    jest.mock('@07-shared/config/config', () => ({
-      config: { dataEngine: { secretKey: 'valid-secret' } },
-    }));
+    // mockConfigObj proxyUrl은 beforeEach에서 '' 로 리셋됨 — 재등록 불필요함
     jest.mock('@07-shared/lib/socket', () => ({
       SocketService: { emitToGroup: jest.fn() },
     }));
@@ -684,9 +680,7 @@ describe('dualTriggerService — Phase 17.6', () => {
 
   it('TS-6: pending=1 (한쪽만 등록) → reason=pending_count_mismatch + 미호출됨', async () => {
     jest.resetModules();
-    jest.mock('@07-shared/config/config', () => ({
-      config: { dataEngine: { secretKey: 'valid-secret' } },
-    }));
+    // mockConfigObj proxyUrl은 beforeEach에서 '' 로 리셋됨 — 재등록 불필요함
     jest.mock('@06-entities/sessions', () => ({
       Session: {
         find: jest.fn().mockResolvedValue([
@@ -740,4 +734,136 @@ describe('dualTriggerService — Phase 17.6', () => {
     freshModule.operatorJoinedGroups.delete('g-pc1');
     consoleSpy.mockRestore();
   });
+});
+
+// ============================================================
+// T-BE-E: proxy 모드 assign-group 라우팅 검증
+// 공유 mock 객체 직접 변조 패턴 — proxyUrl을 런타임에 주입함
+// ============================================================
+
+describe('dualTriggerService — T-BE-E proxy 모드 assign-group 라우팅', () => {
+  const proxyUrl = 'http://operator-pc:5050';
+  const groupId = 'grp-proxy-001';
+  const subjects = [
+    {
+      groupId,
+      url: 'http://de-1.ngrok-free.dev',
+      subjectIndex: 1 as const,
+    },
+    {
+      groupId,
+      url: 'http://de-2.ngrok-free.dev',
+      subjectIndex: 2 as const,
+    },
+  ];
+
+  let dualTriggerSvc: typeof import('./dual-2pc-trigger.service').dualTriggerService;
+  let engineRegistrySvc: typeof import('./engine-registry.service').engineRegistryService;
+  let socketSvc: { emitToGroup: jest.Mock };
+
+  beforeAll(() => {
+    // proxy 모드 활성화 — mockConfigObj.config.proxyUrl 직접 주입함
+    mockConfigObj.config.proxyUrl = 'http://operator-pc:5050';
+    // 모듈 재로드 — 위 proxyUrl 설정 후 fresh module 로드함
+    jest.resetModules();
+    dualTriggerSvc = require('./dual-2pc-trigger.service').dualTriggerService;
+    engineRegistrySvc =
+      require('./engine-registry.service').engineRegistryService;
+    socketSvc = require('@07-shared/lib/socket').SocketService;
+  });
+
+  afterAll(() => {
+    // proxy 모드 해제 — 후속 테스트 격리 보장함
+    mockConfigObj.config.proxyUrl = '';
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+    jest.clearAllTimers();
+    mockFetch.mockReset();
+  });
+
+  // ============================================================
+  // T-BE-E-1: proxy 모드 단일 Proxy 엔드포인트 호출 검증
+  // ============================================================
+
+  it('T-BE-E-1: proxy 모드 — Proxy 단일 POST 호출 + 200 성공 시 triggered 반환됨', async () => {
+    // proxy 모드: 단일 Proxy 엔드포인트 200 응답 설정함
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'ok' }),
+    });
+
+    const result = await dualTriggerSvc.triggerAssignGroup(groupId, subjects);
+
+    expect(result.status).toBe('triggered');
+
+    // 단일 Proxy 엔드포인트에만 호출됨 — per-DE 루프 없음
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      `${proxyUrl}/control/assign-group`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'X-Engine-Secret': 'valid-secret',
+          'Content-Type': 'application/json',
+        }),
+        // eslint-disable-next-line camelcase
+        body: JSON.stringify({ group_id: groupId }),
+      })
+    );
+
+    // Proxy 200 = 양쪽 할당 완료 — registry ready 상태 확인함
+    const status = dualTriggerSvc.getRegistryStatus(groupId);
+    expect(status.ready).toBe(true);
+    expect(status.registered).toBe(2);
+  });
+
+  // ============================================================
+  // T-BE-E-2: proxy 모드 실패 경로 — 기존 실패 처리(cleanup + emit) 발동 검증
+  // ============================================================
+
+  it('T-BE-E-2: proxy 모드 — Proxy 5xx retry 소진 시 dual-session-failed emit됨', async () => {
+    const cleanupSpy = jest.spyOn(engineRegistrySvc, 'cleanupGroup');
+
+    // 3회 5xx — proxy 단일 엔드포인트 retry 소진 시 실패 처리 발동 검증
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        json: async () => ({}),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        json: async () => ({}),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        json: async () => ({}),
+      });
+
+    await dualTriggerSvc.triggerAssignGroup(groupId, subjects);
+
+    // 실패 처리 발동 확인 — cleanup + dual-session-failed emit 검증함
+    expect(cleanupSpy).toHaveBeenCalledWith(groupId);
+    expect(socketSvc.emitToGroup).toHaveBeenCalledWith(
+      groupId,
+      'dual-session-failed',
+      expect.objectContaining({
+        groupId,
+        error: expect.any(String),
+      })
+    );
+
+    const status = dualTriggerSvc.getRegistryStatus(groupId);
+    expect(status.ready).toBe(false);
+  }, 15000); // proxy retry 3회 backoff(1s+2s) + 여유 시간 확보함
+});
+
+// 파일 레벨 afterAll — 전역 fetch 원복 (모든 describe 완료 후 실행됨)
+afterAll(() => {
+  global.fetch = originalFetch;
 });
