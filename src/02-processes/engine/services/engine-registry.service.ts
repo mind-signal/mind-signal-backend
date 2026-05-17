@@ -28,6 +28,9 @@ interface PendingEntry {
 
 const pendingRegistry = new Map<1 | 2, PendingEntry>();
 
+/** group-level fail-closed ns 기록 — T1-BE-F가 채움, T1-BE-G gate가 조회함 */
+const failClosedAtNsByGroup = new Map<string, bigint>();
+
 export const engineRegistryService = {
   // ===== 기존 메서드 — backward compat 유지 (engine-proxy.service.ts 5곳 호출 보존) =====
 
@@ -154,6 +157,17 @@ export const engineRegistryService = {
         registeredCallbacks.delete(groupId);
       }
     };
+  },
+
+  /**
+   * groupId의 fail-closed 발동 ns 타임스탬프 조회함 (ADR §D).
+   * T1-BE-F가 proxy /health 폴링 실패 시 set, 본 getter는 T1-BE-G 게이트가 조회함.
+   *
+   * @param groupId - 실험 그룹 ID
+   * @returns fail-closed ns(bigint) 또는 미발동 시 undefined
+   */
+  getFailClosedNs(groupId: string): bigint | undefined {
+    return failClosedAtNsByGroup.get(groupId);
   },
 
   /**

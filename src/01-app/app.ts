@@ -10,6 +10,7 @@ import { config } from '@07-shared/config/config';
 import { SocketService } from '@07-shared/lib/socket';
 import { AuthProviderRegistry } from '@05-features/auth/services/providers/auth-provider.registry';
 import { registerPairingTriggerListener } from '@01-app/startup-listeners';
+import { registerProxyIngestNamespace } from '@02-processes/measurements/services/proxy-ingest.handler';
 
 const app = express();
 app.use(cors());
@@ -74,6 +75,7 @@ async function connectDB() {
     const PORT = Number(config.port) || 5000;
     const server = http.createServer(app);
     SocketService.init(server);
+    registerProxyIngestNamespace(); // Phase 18 T1-BE-G — /proxy 인그레스 네임스페이스 등록함
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`API running at http://localhost:${PORT}`);
     });

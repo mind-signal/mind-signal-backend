@@ -70,6 +70,12 @@ measurementSampleSchema.index(
   { unique: true, name: 'group_id_subject_idx_seq_unique' }
 );
 
+/** 수신 시각 기반 조회 성능 인덱스 (group_id + proxy_ingress_ts_ns) */
+measurementSampleSchema.index(
+  { group_id: 1, proxy_ingress_ts_ns: 1 },
+  { name: 'group_ingress_perf' }
+);
+
 /** 모델 생성 및 수출 */
 export const MeasurementSampleModel = model<MeasurementSample>(
   'MeasurementSample',
