@@ -92,6 +92,8 @@ export const config = {
     registrationTimeoutMs: Number(
       process.env.DUAL_2PC_REGISTRATION_TIMEOUT_MS ?? 60000
     ),
+    // CX4-1: aligner flush loop 주기 — pairedWindow 단위로 정렬 버퍼 방출함
+    pairedWindowMs: Number(process.env.PAIRED_WINDOW_MS ?? 100),
   },
 } as const; // 읽기 전용으로 설정
 

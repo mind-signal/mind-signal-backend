@@ -5,7 +5,6 @@ import { AppError } from '@07-shared/errors';
 import { engineRegistryService } from '@02-processes/engine/services/engine-registry.service';
 import { timestampAlignerRegistry } from './timestamp-aligner.service';
 import { stimulusBroadcasterService } from './stimulus-broadcaster.service';
-import type { WavePower } from './timestamp-aligner.service';
 import { RedisClientType } from 'redis';
 import { config } from '@07-shared/config/config';
 
@@ -40,9 +39,8 @@ const groupFlushIntervals = new Map<string, ReturnType<typeof setInterval>>();
 // ---------------------------------------------------------------------------
 
 /**
- * DUAL_2PC groupId의 두 Redis 채널(subject 1 + 2)을 구독하고
- * aligner.ingest()로 라우팅함 (v7 H-1 반영).
- * flush setInterval(100ms)도 이 함수 내부에서 기동함 (v9 R9-H-2 반영).
+ * DUAL_2PC groupId의 두 Redis 채널(subject 1 + 2)을 구독함 (v7 H-1 반영).
+ * flush loop은 startDualMeasurement에서 startAlignerFlushLoop으로 별도 기동됨 (CX4-1).
  *
  * @param groupId - 실험 그룹 ID
  */
@@ -61,16 +59,8 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
         // v8 C-1: streamer.py가 brain_sync_all 외에 headset_status 타입도 동일 채널에 publish
         // (watchdog L172-183, on_headset_disconnected L193-204). parsed.waves 필드 없음 → aligner에 undefined 주입 방지
         if (parsed.type !== 'brain_sync_all') return;
-        // waves 필드 → WavePower 추출 (core/streamer.py L266-277 payload 구조 기준)
-        const sample: WavePower = parsed.waves;
-        // 과도기 ns 브리지 — T1-BE-J에서 이 legacy Redis 경로(L67-72) 전체 삭제 예정 (R4-7)
-        const serverTimestamp = String(BigInt(Date.now()) * 1_000_000n);
-        timestampAlignerRegistry.ingest(
-          groupId,
-          subjectIndex,
-          sample,
-          serverTimestamp
-        );
+        // Stage-1 DUAL_2PC는 proxy(/proxy ingest)가 모든 샘플 forward — Redis aligner-ingest 경로 superseded (R4-7, ADR §E)
+        // 구독 자체는 비-proxy 잔존용 보존함
       } catch (err) {
         console.error(`DUAL_2PC ${channel} parse error:`, err);
       }
@@ -78,12 +68,18 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
     subscribers.push(subscriber);
   }
   groupSubscribers.set(groupId, subscribers);
+}
 
-  // v9 R9-H-2: flush 호출 주체는 subscribeWithAligner 내부 setInterval(100)
-  // unsubscribeGroupChannels에서 clearInterval 처리
+/**
+ * groupId의 aligner flush loop 기동함 (CX4-1 — subscribeWithAligner와 생명주기 분리).
+ * getOrCreate 직후 호출되어 proxy ingest와 경쟁 없음.
+ *
+ * @param groupId - 실험 그룹 ID
+ */
+function startAlignerFlushLoop(groupId: string): void {
   const intervalId = setInterval(() => {
     timestampAlignerRegistry.flush(groupId);
-  }, 100);
+  }, config.dualPc.pairedWindowMs);
   // process 종료 시 flush 타이머가 Jest/Node를 block하지 않도록 unref 적용함
   intervalId.unref();
   groupFlushIntervals.set(groupId, intervalId);
@@ -198,6 +194,8 @@ function startDualMeasurement(groupId: string): void {
         groupId,
         config.dualPc.timestampToleranceMs
       );
+      // CX4-1: flush loop을 getOrCreate 직후 기동 — proxy ingest와 경쟁 없음
+      startAlignerFlushLoop(groupId);
 
       // stimulus broadcast (room emit)
       await stimulusBroadcasterService.broadcast(groupId);

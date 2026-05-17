@@ -76,8 +76,9 @@ describe('measurement.service.ts — BE-3: DUAL_2PC 분기 정적 검증', () =>
     expect(source).toContain('engineRegistryService.cleanupGroup');
   });
 
-  it('v9 R9-H-2: subscribeWithAligner 내부 setInterval flush 기동됨', () => {
-    // subscribeWithAligner 함수 내부에 setInterval + flush 호출 존재함
+  it('CX4-1: startAlignerFlushLoop 함수가 setInterval flush를 기동함', () => {
+    // flush 생명주기는 subscribeWithAligner와 분리된 startAlignerFlushLoop 소유함 (T1-BE-J)
+    expect(source).toContain('startAlignerFlushLoop');
     expect(source).toContain('setInterval');
     expect(source).toContain('groupFlushIntervals');
   });

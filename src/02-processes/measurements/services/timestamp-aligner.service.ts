@@ -4,8 +4,9 @@
  * 두 subject EEG 샘플을 proxy_ingress_ts_ns(decimal-string 나노초) 기준으로
  * 정렬하는 모듈 레벨 레지스트리 (Phase 16 Wave 1 skeleton → Phase 18 Wave 2 본 구현).
  *
- * flush 호출 주체 (v9 R9-H-2): subscribeWithAligner(groupId) 내부
- * setInterval(() => timestampAlignerRegistry.flush(groupId), 100) 기동,
+ * flush 호출 주체 (CX4-1): startAlignerFlushLoop(groupId) 내부
+ * setInterval(() => timestampAlignerRegistry.flush(groupId), config.dualPc.pairedWindowMs)
+ * 기동 (startDualMeasurement에서 getOrCreate 직후 호출),
  * unsubscribeGroupChannels(groupId) 헬퍼에서 clearInterval 처리.
  */
 
@@ -220,7 +221,7 @@ export const timestampAlignerRegistry = {
 
   /**
    * 해당 group 의 버퍼를 스캔하여 정렬된 쌍을 반환하고 Socket.io로 전송함.
-   * flush 호출 주체 (v9 R9-H-2): subscribeWithAligner 내부 setInterval(100).
+   * flush 호출 주체 (CX4-1): startAlignerFlushLoop 내부 setInterval(config.dualPc.pairedWindowMs).
    *
    * @param groupId - 실험 그룹 ID
    * @returns 정렬된 AlignedSample 배열

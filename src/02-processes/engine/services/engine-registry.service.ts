@@ -179,6 +179,8 @@ export const engineRegistryService = {
   cleanupGroup(groupId: string): void {
     dualRegistry.delete(groupId);
     registeredCallbacks.delete(groupId);
+    // CX4-5: T1-BE-G가 추가한 failClosed Map의 소비 cleanup — T1-BE-F .set과 짝
+    failClosedAtNsByGroup.delete(groupId);
     console.log(`DUAL_2PC 엔진 레지스트리 정리 완료: groupId=${groupId}`);
   },
 

@@ -35,6 +35,8 @@ jest.mock('@07-shared/config/config', () => ({
       timestampToleranceMs: 200,
       // 짧은 timeout — 테스트 중 의도적 미등록 시나리오에서 빠르게 reject
       registrationTimeoutMs: 5000,
+      // CX4-1: pairedWindowMs mock — 작은 값으로 flush interval 빠르게 발화
+      pairedWindowMs: 50,
     },
   },
 }));
@@ -220,6 +222,42 @@ describe('startDualMeasurement 런타임 streamStart 호출 검증', () => {
     expect(Session.updateMany as jest.Mock).toHaveBeenCalledWith(
       { groupId: GROUP_ID, status: 'PAIRED' },
       { status: 'MEASURING', measuredAt: expect.any(Date) }
+    );
+  });
+
+  it('getOrCreate 직후 startAlignerFlushLoop이 기동되어 flush가 호출됨 (CX4-1)', async () => {
+    // Arrange — happy-path 셋업
+    (Session.findById as jest.Mock).mockResolvedValue(
+      makeDualSession(GROUP_ID)
+    );
+
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      2,
+      'http://de2:5002',
+      ENGINE_SECRET
+    );
+
+    // Act — fire-and-forget 비동기 진입
+    await startMeasurementService('session-id-001');
+
+    // flush interval이 pairedWindowMs(50ms) 이상 발화할 시간 확보 (200ms 대기)
+    await new Promise<void>((r) => setTimeout(r, 200));
+
+    // Assert — flush가 GROUP_ID로 최소 1회 호출됨
+    // 인터벌이 startAlignerFlushLoop에서 기동되지 않으면 flush 호출 0 → 실패
+    // 존재 여부만 검증(toHaveBeenCalledWith) — 인터벌 leakage로 인한 호출 횟수 변동에 비종속적임
+    const alignerMock = jest.requireMock(
+      '@02-processes/measurements/services/timestamp-aligner.service'
+    );
+    expect(alignerMock.timestampAlignerRegistry.flush).toHaveBeenCalledWith(
+      GROUP_ID
     );
   });
 
