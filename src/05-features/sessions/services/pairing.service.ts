@@ -39,9 +39,10 @@ export const createGroupSessionProcess = async (
   groupId?: string,
   creatorId?: string
 ) => {
-  // 1. 그룹 식별자 결정함 (제공되지 않으면 신규 생성 수행함)
-  const effectiveGroupId =
-    groupId || crypto.randomBytes(4).toString('hex').toUpperCase();
+  // 1. 그룹 식별자 결정함 (제공되지 않으면 24자리 ObjectId hex 신규 생성함)
+  // session.schema.ts:8-11의 24자리 HEX regex와 정합 보장. 8자리 단축 형식은
+  // FE 재전송 시 schema 거부되어 DUAL 2인 페어링 차단되는 회귀 박제됨
+  const effectiveGroupId = groupId || new Types.ObjectId().toHexString();
 
   // 2. 원자적 $inc 연산으로 고유 subjectIndex 획득함 (경쟁 조건 방지함)
   const counter = await mongoose.connection
