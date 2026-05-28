@@ -1,5 +1,6 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
+import { config } from '@07-shared/config/config';
 
 /**
  * Socket.io 서버 관리 유틸리티
@@ -48,7 +49,66 @@ export class SocketService {
       });
     });
 
+    // Phase 18.1 MVP - mind-signal-proxy의 be-forwarder 핸드셰이크 수용 처리함
+    this._initProxyNamespace();
+
     return this.io;
+  }
+
+  /**
+   * /proxy namespace handler 등록함.
+   *
+   * mind-signal-proxy의 `be-forwarder`가 ENGINE_SECRET 핸드셰이크로 connect 시도함
+   * (`be-forwarder.ts` `auth: { engineSecret }`).
+   * 현재 MVP 단계는 auth 검증만 활성화하고 `proxy:sample` 이벤트는
+   * `{ok:false, retryable:false, error:'not_implemented'}` ack 반환함.
+   * 후속 Phase 18.2에서 envelope 검증/persist/dedup 로직 구현 예정.
+   *
+   * @throws Error('invalid_engine_secret') 핸드셰이크 secret 미일치 시 발생
+   */
+  private static _initProxyNamespace(): void {
+    const nsp = this.io.of('/proxy');
+
+    // auth 핸드셰이크 - engineSecret 일치 검증함
+    nsp.use((socket, next) => {
+      const handshakeSecret = socket.handshake.auth?.engineSecret;
+      if (typeof handshakeSecret !== 'string' || handshakeSecret.length === 0) {
+        next(new Error('invalid_engine_secret'));
+        return;
+      }
+      if (handshakeSecret !== config.dataEngine.secretKey) {
+        next(new Error('invalid_engine_secret'));
+        return;
+      }
+      next();
+    });
+
+    nsp.on('connection', (socket: Socket) => {
+      console.log(`[/proxy] connected: ${socket.id}`);
+
+      // proxy:sample 이벤트 - Phase 18.1 MVP는 persist 미구현 상태로 drop 반환함
+      socket.on(
+        'proxy:sample',
+        (
+          _envelope: unknown,
+          ack?: (response: {
+            ok: boolean;
+            retryable?: boolean;
+            error?: string;
+          }) => void
+        ) => {
+          ack?.({
+            ok: false,
+            retryable: false,
+            error: 'not_implemented',
+          });
+        }
+      );
+
+      socket.on('disconnect', () => {
+        console.log(`[/proxy] disconnected: ${socket.id}`);
+      });
+    });
   }
 
   /**
