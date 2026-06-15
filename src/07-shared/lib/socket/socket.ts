@@ -1,6 +1,8 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import { config } from '@07-shared/config/config';
+import { redisService } from '@07-shared/lib/redis';
+import { ProxySampleSchema } from './proxy-envelope.schema';
 
 /**
  * Socket.io 서버 관리 유틸리티
@@ -60,14 +62,20 @@ export class SocketService {
    *
    * mind-signal-proxy의 `be-forwarder`가 ENGINE_SECRET 핸드셰이크로 connect 시도함
    * (`be-forwarder.ts` `auth: { engineSecret }`).
-   * 현재 MVP 단계는 auth 검증만 활성화하고 `proxy:sample` 이벤트는
-   * `{ok:false, retryable:false, error:'not_implemented'}` ack 반환함.
-   * 후속 Phase 18.2에서 envelope 검증/persist/dedup 로직 구현 예정.
+   * auth 검증 후 `proxy:sample` 이벤트는 envelope을 검증하여 Redis로 publish함으로써
+   * 기존 `subscribeWithAligner` 소비 경로에 합류시킴 (Phase 18.2).
    *
    * @throws Error('invalid_engine_secret') 핸드셰이크 secret 미일치 시 발생
    */
   private static _initProxyNamespace(): void {
     const nsp = this.io.of('/proxy');
+
+    // proxy:sample은 공유 redis client로 publish함. app 시작 시 이 client는 연결되지
+    // 않으므로(subscribe 경로는 전부 client.duplicate() 경유) 여기서 연결을 보장함.
+    // 실패해도 핸들러 try/catch가 retryable ack로 처리해 be-forwarder가 재시도함.
+    void redisService.connect().catch((err) => {
+      console.error('[/proxy] redis 연결 실패:', err);
+    });
 
     // auth 핸드셰이크 - engineSecret 일치 검증함
     nsp.use((socket, next) => {
@@ -86,22 +94,45 @@ export class SocketService {
     nsp.on('connection', (socket: Socket) => {
       console.log(`[/proxy] connected: ${socket.id}`);
 
-      // proxy:sample 이벤트 - Phase 18.1 MVP는 persist 미구현 상태로 drop 반환함
+      // proxy:sample 이벤트 - envelope 검증 후 Redis publish로 aligner 경로에 합류시킴 (Phase 18.2)
       socket.on(
         'proxy:sample',
-        (
-          _envelope: unknown,
+        async (
+          envelope: unknown,
           ack?: (response: {
             ok: boolean;
             retryable?: boolean;
             error?: string;
           }) => void
         ) => {
-          ack?.({
-            ok: false,
-            retryable: false,
-            error: 'not_implemented',
-          });
+          const parsed = ProxySampleSchema.safeParse(envelope);
+          if (!parsed.success) {
+            // 형태 오류는 재시도 무의미함 - non-retryable drop 반환함
+            ack?.({ ok: false, retryable: false, error: 'invalid_frame' });
+            return;
+          }
+
+          const {
+            group_id: groupId,
+            subject_idx: subjectIndex,
+            payload,
+          } = parsed.data;
+          const channel = `mind-signal:${groupId}:subject:${subjectIndex}`;
+          try {
+            // redisService.client는 publish 전용 - 모든 subscribe는 duplicate() 경유라
+            // 이 공유 client는 PubSub 모드에 진입하지 않음 (measurement.service.ts 정합).
+            // dedup 미수행이라 duplicate 필드 미emit - be-forwarder는 ok:true로 dequeue함.
+            // 소비자가 요구하는 형태({type, waves})로 감싸 publish함
+            await redisService.client.publish(
+              channel,
+              JSON.stringify({ type: 'brain_sync_all', waves: payload })
+            );
+            ack?.({ ok: true });
+          } catch (err) {
+            // Redis 일시 장애는 재시도 허용함 - 소켓은 죽이지 않음
+            console.error(`[/proxy] publish 실패 ${channel}:`, err);
+            ack?.({ ok: false, retryable: true, error: 'publish_failed' });
+          }
         }
       );
 
