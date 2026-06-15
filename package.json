@@ -25,7 +25,8 @@
     "verify": "npm run format:check && npm run typecheck && npm run depcruise && npm run lint && npm run test && npm run build",
     "commitlint": "commitlint --from=HEAD~1 --to=HEAD --verbose",
     "migrate:pr-a8:dry-run": "ts-node -r tsconfig-paths/register ./scripts/migrate-2026-05-16-pr-a8-subject-index.ts --dry-run",
-    "migrate:pr-a8:apply": "ts-node -r tsconfig-paths/register ./scripts/migrate-2026-05-16-pr-a8-subject-index.ts --apply"
+    "migrate:pr-a8:apply": "ts-node -r tsconfig-paths/register ./scripts/migrate-2026-05-16-pr-a8-subject-index.ts --apply",
+    "e2e:synthetic": "ts-node -r tsconfig-paths/register ./scripts/dual2pc-synthetic-e2e.ts"
   },
   "description": "Mind Signal Project Backend",
   "dependencies": {
