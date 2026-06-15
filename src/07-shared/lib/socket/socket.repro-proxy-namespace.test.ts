@@ -12,6 +12,7 @@
  * Scenario D - 유효 envelope은 Redis publish 후 {ok:true} 반환함 (Phase 18.2)
  * Scenario E - 기본 namespace join-room 동작 영향 없음
  * Scenario F - 비정상 envelope은 invalid_frame non-retryable 반환 + publish 미호출함
+ * Scenario G - 범위 밖 subject_idx(3+)는 invalid_frame 거부 + publish 미호출함
  */
 
 import http from 'http';
@@ -53,6 +54,11 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
       serverUrl = `http://127.0.0.1:${port}`;
       done();
     });
+  });
+
+  beforeEach(() => {
+    // 시나리오 간 mock 호출 이력 누수 방지함
+    jest.clearAllMocks();
   });
 
   afterAll((done) => {
@@ -118,7 +124,6 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
   });
 
   it('Scenario D: 유효 envelope은 Redis publish 후 {ok:true} 반환함 (Phase 18.2)', (done) => {
-    mockPublish.mockClear();
     mockPublish.mockResolvedValue(1);
     const client: ClientSocket = ioClient(`${serverUrl}/proxy`, {
       transports: ['websocket'],
@@ -198,7 +203,6 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
   });
 
   it('Scenario F: 비정상 envelope은 invalid_frame non-retryable 반환 + publish 미호출함', (done) => {
-    mockPublish.mockClear();
     const client: ClientSocket = ioClient(`${serverUrl}/proxy`, {
       transports: ['websocket'],
       auth: { engineSecret: 'test-engine-secret-abc123' },
@@ -212,6 +216,53 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
         .emit(
           'proxy:sample',
           { dummy: 'envelope' },
+          (
+            err: Error | null,
+            ack: { ok: boolean; retryable?: boolean; error?: string }
+          ) => {
+            try {
+              expect(err).toBeNull();
+              expect(ack).toEqual({
+                ok: false,
+                retryable: false,
+                error: 'invalid_frame',
+              });
+              expect(mockPublish).not.toHaveBeenCalled();
+              client.disconnect();
+              done();
+            } catch (e) {
+              client.disconnect();
+              done(e as Error);
+            }
+          }
+        );
+    });
+
+    client.once('connect_error', (err: Error) => {
+      done(new Error(`unexpected connect_error: ${err.message}`));
+    });
+  });
+
+  it('Scenario G: 범위 밖 subject_idx는 invalid_frame 거부 + publish 미호출함', (done) => {
+    const client: ClientSocket = ioClient(`${serverUrl}/proxy`, {
+      transports: ['websocket'],
+      auth: { engineSecret: 'test-engine-secret-abc123' },
+      forceNew: true,
+      reconnection: false,
+    });
+    // subject_idx 3은 구독자 없는 채널이라 silent drop 위험 - 검증 단계에서 거부해야 함
+    const envelope = {
+      group_id: 'g-abc',
+      subject_idx: 3,
+      payload: { delta: 1, theta: 2, alpha: 3, beta: 4, gamma: 5 },
+    };
+
+    client.once('connect', () => {
+      client
+        .timeout(2_000)
+        .emit(
+          'proxy:sample',
+          envelope,
           (
             err: Error | null,
             ack: { ok: boolean; retryable?: boolean; error?: string }

@@ -14,7 +14,8 @@ import { io } from 'socket.io-client';
 import { createClient } from 'redis';
 import { config } from '@07-shared/config/config';
 
-const GROUP_ID = 'synthetic-grp';
+// 실행마다 고유 group id - 같은 Redis에 대한 반복/병렬 실행 간 채널 충돌 방지함
+const GROUP_ID = `synthetic-grp-${Date.now()}`;
 const SUBJECT_IDX = 2;
 const SAMPLE_COUNT = 5;
 const CHANNEL = `mind-signal:${GROUP_ID}:subject:${SUBJECT_IDX}`;
@@ -24,9 +25,14 @@ async function main(): Promise<void> {
   const sub = createClient({ url: config.redis.url });
   await sub.connect();
   await sub.subscribe(CHANNEL, (msg: string) => {
-    const parsed = JSON.parse(msg);
-    if (parsed.type === 'brain_sync_all') received += 1;
-    console.log(`[recv] ${CHANNEL} type=${parsed.type} count=${received}`);
+    try {
+      const parsed = JSON.parse(msg) as { type?: string };
+      if (parsed.type === 'brain_sync_all') received += 1;
+      console.log(`[recv] ${CHANNEL} type=${parsed.type} count=${received}`);
+    } catch (err) {
+      // 비정상 메시지 1건이 전체 스크립트를 죽이지 않도록 로깅 후 무시함
+      console.error(`[recv] invalid JSON on ${CHANNEL}:`, err);
+    }
   });
 
   const socket = io(`http://localhost:${config.port}/proxy`, {

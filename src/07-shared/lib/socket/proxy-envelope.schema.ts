@@ -18,10 +18,10 @@ const WavePowerSchema = z.object({
 
 export const ProxySampleSchema = z.object({
   group_id: z.string().min(1),
-  // subject_idx는 1-based 계약임 (measurement.service.ts [1, 2] 루프 정합).
-  // proxy 원본은 z.number().int()로 더 느슨하나 BE는 0/음수를 의도적 fail-closed로
-  // invalid_frame 처리함.
-  subject_idx: z.number().int().min(1),
+  // subject_idx는 1-based 계약이며 Group 최대 2 Subject라 1..2만 유효함
+  // (measurement.service.ts [1, 2] 루프 정합). 범위 밖(0/음수/3+)은 구독자 없는
+  // 채널로 publish되어 ack는 ok인데 silent drop되므로 의도적 fail-closed로 invalid_frame 거부함.
+  subject_idx: z.number().int().min(1).max(2),
   payload: WavePowerSchema,
 });
 
