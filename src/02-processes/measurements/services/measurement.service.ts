@@ -224,6 +224,37 @@ function startDualMeasurement(groupId: string): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * groupId 기반 DUAL_2PC 측정 시작 서비스.
+ * 오퍼레이터 대시보드가 sessionId 없이 groupId만 보유한 경우 사용함.
+ *
+ * @param groupId - 실험 그룹 ID
+ * @returns 그룹 ID 반환
+ * @throws AppError 404 — 해당 groupId의 세션 미존재
+ * @throws AppError 400 — experimentMode가 DUAL_2PC가 아님
+ */
+export const startDualMeasurementByGroup = async (
+  groupId: string
+): Promise<{ groupId: string }> => {
+  // groupId로 세션 목록 조회함
+  const sessions = await Session.find({ groupId });
+  if (sessions.length === 0) {
+    throw new AppError('해당 groupId에 속한 세션을 찾을 수 없습니다.', 404);
+  }
+
+  // experimentMode 검증 — DUAL_2PC만 허용함
+  if (sessions[0].experimentMode !== 'DUAL_2PC') {
+    throw new AppError(
+      'groupId 기반 측정 시작은 DUAL_2PC 모드만 지원합니다.',
+      400
+    );
+  }
+
+  // fire-and-forget 실행 (기존 함수 재사용)
+  startDualMeasurement(groupId);
+  return { groupId };
+};
+
+/**
  * 뇌파 측정 시작 서비스 (discriminated union 반환, v5 N-9 반영).
  *
  * DUAL_2PC: fire-and-forget 후 { kind: 'DUAL_2PC', groupId } 반환.

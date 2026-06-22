@@ -36,6 +36,33 @@ const measurementController = {
       return next(error);
     }
   },
+
+  /**
+   * groupId 기반 DUAL_2PC 측정 시작 핸들러.
+   * 오퍼레이터 대시보드가 sessionId 없이 groupId만 보유할 때 사용함.
+   * 202 Accepted + groupId 반환함.
+   */
+  startStreamingByGroup: async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
+    try {
+      const { groupId } = req.params;
+
+      // groupId 기반 서비스 호출 — 404/400 검증 포함
+      const result =
+        await measurementService.startDualMeasurementByGroup(groupId);
+
+      return res.status(202).json({
+        status: 'accepted',
+        groupId: result.groupId,
+      });
+    } catch (error) {
+      // 에러 발생 시 전역 핸들러로 전달
+      return next(error);
+    }
+  },
 };
 
 export default measurementController;
