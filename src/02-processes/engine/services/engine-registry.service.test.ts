@@ -279,4 +279,76 @@ describe('engineRegistryService — BE-5', () => {
       expect(callback).not.toHaveBeenCalled();
     });
   });
+
+  // ============================================================
+  // F4 — registerPending이 stale dualRegistry 배정 제거 검증
+  // (DE 재시작 시 옛 그룹 배정 잔류가 그룹ID 표류를 유발. 단 proxy 모드
+  //  주기 재등록(동일 url)은 라이브 배정을 보존해야 함 — D2 정합.)
+  // ============================================================
+
+  describe('registerPending — stale dualRegistry 제거 (F4)', () => {
+    it('다른 url로 registerPending 시 동일 subjectIndex의 옛 그룹 배정 제거됨', () => {
+      engineRegistryService.registerDual(
+        'grp-old',
+        1,
+        'http://old:5002',
+        'valid-secret'
+      );
+      expect(
+        engineRegistryService.getEngineUrlByGroupSubject('grp-old', 1)
+      ).toBe('http://old:5002');
+
+      // DE 재시작 → 다른 url로 pending 재등록
+      engineRegistryService.registerPending(
+        1,
+        'http://new:5002',
+        'valid-secret'
+      );
+
+      expect(() =>
+        engineRegistryService.getEngineUrlByGroupSubject('grp-old', 1)
+      ).toThrow();
+    });
+
+    it('동일 url로 registerPending(주기 재등록) 시 라이브 배정 유지함', () => {
+      engineRegistryService.registerDual(
+        'grp-live',
+        1,
+        'http://de:5002',
+        'valid-secret'
+      );
+      // proxy 모드 주기 재등록 — 동일 url이면 evict 안 함
+      engineRegistryService.registerPending(
+        1,
+        'http://de:5002',
+        'valid-secret'
+      );
+      expect(
+        engineRegistryService.getEngineUrlByGroupSubject('grp-live', 1)
+      ).toBe('http://de:5002');
+    });
+
+    it('registerPending이 다른 subjectIndex 배정은 유지함', () => {
+      engineRegistryService.registerDual(
+        'grp-old',
+        1,
+        'http://old1:5002',
+        'valid-secret'
+      );
+      engineRegistryService.registerDual(
+        'grp-old',
+        2,
+        'http://old2:5002',
+        'valid-secret'
+      );
+      engineRegistryService.registerPending(
+        1,
+        'http://new1:5002',
+        'valid-secret'
+      );
+      expect(
+        engineRegistryService.getEngineUrlByGroupSubject('grp-old', 2)
+      ).toBe('http://old2:5002');
+    });
+  });
 });

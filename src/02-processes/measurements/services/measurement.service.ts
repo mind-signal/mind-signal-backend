@@ -119,6 +119,32 @@ async function unsubscribeGroupChannels(groupId: string): Promise<void> {
 }
 
 /**
+ * 현재 그룹 외 다른 활성 DUAL_2PC 그룹의 aligner/구독/레지스트리 전부 정리함 (F1).
+ * 이전 run의 aligner가 allCompleted stop 없이 잔존하면 옛 room으로 계속
+ * aligned_pair를 emit하여 새 그룹 차트가 비는 표류가 발생함. 새 측정 시작 시
+ * 타 그룹을 teardown해 단일 활성 aligner를 보장함.
+ * 현재 그룹에 잔존 구독이 있으면 재구독 전 정리함 (동일 그룹 재시작 누수 방지).
+ *
+ * @param currentGroupId - 이번에 시작하는 그룹 ID (정리 제외 대상)
+ */
+async function teardownStaleGroups(currentGroupId: string): Promise<void> {
+  const activeGroups = new Set<string>([
+    ...groupSubscribers.keys(),
+    ...groupFlushIntervals.keys(),
+  ]);
+  for (const gid of activeGroups) {
+    if (gid === currentGroupId) continue;
+    await unsubscribeGroupChannels(gid);
+    timestampAlignerRegistry.cleanup(gid);
+    engineRegistryService.cleanupGroup(gid);
+  }
+  // 동일 그룹 재시작 — 기존 구독 잔존 시 재구독 전 정리함
+  if (groupSubscribers.has(currentGroupId)) {
+    await unsubscribeGroupChannels(currentGroupId);
+  }
+}
+
+/**
  * 두 DE가 모두 등록될 때까지 기다리거나 timeout 발생함 (v4 N-4 + v4 N-7 반영).
  * EventEmitter 패턴: engineRegistryService.registerDual() 호출 시 emit.
  * Promise settle 시 unsubscribe + clearTimeout 필수 (ghost 콜백/타이머 누수 방지).
@@ -180,6 +206,9 @@ function startDualMeasurement(groupId: string): void {
   dualMeasurementInFlight.add(groupId);
   (async () => {
     try {
+      // 새 측정 시작 전 stale 그룹 aligner/구독 정리 — 단일 활성 보장 (F1)
+      await teardownStaleGroups(groupId);
+
       // 두 DE 등록 대기 (최대 60초) — 클라이언트에게는 이미 응답 반환됨
       await waitForBothEngines(groupId, config.dualPc.registrationTimeoutMs);
 

@@ -249,6 +249,78 @@ describe('timestampAlignerRegistry — BE-aligner', () => {
   });
 
   // ============================================================
+  // 단일 헤드셋 지원 — subject 2 단독 emit
+  // ============================================================
+
+  describe('단일 헤드셋 — subject 2 단독 emit', () => {
+    it('subject 2가 tolerance 초과 대기(subject 1 없음) → subject_1:null로 단독 emit됨', () => {
+      // Arrange — subject 1 헤드셋 없음, subject 2(노트북 B) 샘플이 페어링 윈도
+      // (200ms) 를 넘겨 대기함 (250ms 전 ingest, 500ms 만료 전)
+      const groupId = 'grp-single2';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      const sample2 = makeSample(2.0);
+
+      // Act
+      timestampAlignerRegistry.ingest(groupId, 2, sample2, Date.now() - 250);
+      const result = timestampAlignerRegistry.flush(groupId);
+
+      // Assert
+      expect(result).toHaveLength(1);
+      expect(result[0].subject_1).toBeNull();
+      expect(result[0].subject_2).toEqual(sample2);
+      expect(mockEmitToGroup).toHaveBeenCalledTimes(1);
+      expect(mockEmitToGroup.mock.calls[0][1]).toBe('aligned_pair');
+    });
+
+    it('subject 2 단독 emit 후 버퍼 비워짐 — 다음 flush 재emit 없음', () => {
+      // Arrange
+      const groupId = 'grp-single2-clear';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      timestampAlignerRegistry.ingest(
+        groupId,
+        2,
+        makeSample(2.0),
+        Date.now() - 250
+      );
+
+      // Act — 1차 flush에서 단독 emit
+      timestampAlignerRegistry.flush(groupId);
+      mockEmitToGroup.mockClear();
+      const second = timestampAlignerRegistry.flush(groupId);
+
+      // Assert — 2차 flush는 빈 배열 + emit 없음
+      expect(second).toHaveLength(0);
+      expect(mockEmitToGroup).not.toHaveBeenCalled();
+    });
+
+    it('subject 1이 tolerance 내로 늦게 도착하면 조기 단독 emit 없이 pair로 매칭됨 (CodeRabbit #68 회귀)', () => {
+      // Arrange — 2헤드셋 세션, subject 2 먼저 도착(아직 페어링 윈도 내)
+      const groupId = 'grp-late1';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      const now = Date.now();
+      const sample1 = makeSample(1.0);
+      const sample2 = makeSample(2.0);
+
+      // Act 1 — subject 2만 있고 어림 → 단독 emit 안 함, 버퍼 유지
+      timestampAlignerRegistry.ingest(groupId, 2, sample2, now);
+      const first = timestampAlignerRegistry.flush(groupId);
+
+      // Assert 1 — subject 1 지연을 single-headset으로 오판하지 않음
+      expect(first).toHaveLength(0);
+      expect(mockEmitToGroup).not.toHaveBeenCalled();
+
+      // Act 2 — subject 1이 tolerance 내(100ms)로 늦게 도착
+      timestampAlignerRegistry.ingest(groupId, 1, sample1, now + 100);
+      const second = timestampAlignerRegistry.flush(groupId);
+
+      // Assert 2 — 조기 solo가 아니라 pair로 매칭됨
+      expect(second).toHaveLength(1);
+      expect(second[0].subject_1).toEqual(sample1);
+      expect(second[0].subject_2).toEqual(sample2);
+    });
+  });
+
+  // ============================================================
   // v8 C-1: brain_sync_all 타입 가드 소스 검증
   // ============================================================
 

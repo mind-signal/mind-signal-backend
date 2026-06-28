@@ -176,6 +176,20 @@ export const engineRegistryService = {
       throw new AppError('유효하지 않은 시크릿 키입니다.', 403);
     }
     pendingRegistry.set(subjectIndex, { url });
+
+    // F4: DE 재시작(다른 url) 시 동일 subjectIndex의 옛 그룹 dualRegistry 배정 제거함.
+    // 옛 배정 잔류가 그룹ID 표류를 유발함. proxy 모드 주기 재등록(동일 url)은
+    // 라이브 배정을 보존하기 위해 url이 다를 때만 evict함 (D2 정합).
+    for (const [gid, group] of dualRegistry.entries()) {
+      const existing = group.get(subjectIndex);
+      if (existing && existing.url !== url) {
+        group.delete(subjectIndex);
+        if (group.size === 0) {
+          dualRegistry.delete(gid);
+        }
+      }
+    }
+
     console.log(`pending 등록 완료: subjectIndex=${subjectIndex}, url=${url}`);
   },
 
