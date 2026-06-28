@@ -47,7 +47,6 @@ jest.mock('@02-processes/engine/services/engine-proxy.service', () => ({
     streamStartDual: jest.fn().mockResolvedValue({ status: 'started' }),
     streamStart: jest.fn().mockResolvedValue({ status: 'started' }),
     analyzePipeline: jest.fn(),
-    analyzeDual2pcPipeline: jest.fn(),
   },
 }));
 
@@ -118,6 +117,7 @@ jest.mock(
 jest.mock('@06-entities/sessions', () => ({
   Session: {
     findById: jest.fn(),
+    find: jest.fn(),
     updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
   },
 }));
@@ -126,7 +126,10 @@ jest.mock('@06-entities/sessions', () => ({
 // imports (mock 선언 후)
 // ---------------------------------------------------------------------------
 import { engineRegistryService } from '@02-processes/engine/services/engine-registry.service';
-import { startMeasurementService } from './measurement.service';
+import {
+  startMeasurementService,
+  startDualMeasurementByGroup,
+} from './measurement.service';
 import { SocketService } from '@07-shared/lib/socket';
 import { Session } from '@06-entities/sessions';
 
@@ -232,6 +235,78 @@ describe('startDualMeasurement 런타임 streamStart 호출 검증', () => {
       expect.objectContaining({
         error: expect.stringContaining('DE 2'),
       })
+    );
+  });
+});
+
+// ===========================================================================
+// 회귀 재현 — DUAL_2PC 측정 라이프사이클 fix (감사 fix_needed #1, #2)
+// ===========================================================================
+
+describe('DUAL_2PC 측정 라이프사이클 회귀 재현', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    engineRegistryService.cleanupGroup(GROUP_ID);
+    (Session.updateMany as jest.Mock).mockResolvedValue({ modifiedCount: 2 });
+  });
+
+  // fix #1: startDualMeasurement 성공 시 세션 MEASURING 전이 누락 회귀
+  // fix 전: 성공 경로에 updateMany(MEASURING) 없음 → 세션 PAIRED 잔류 →
+  //         이후 stop이 PAIRED→COMPLETED 불가로 실패. 본 테스트는 fix 전 RED.
+  it('streamStartDual 성공 후 세션을 MEASURING으로 전이함', async () => {
+    (Session.findById as jest.Mock).mockResolvedValue(
+      makeDualSession(GROUP_ID)
+    );
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      2,
+      'http://de2:5002',
+      ENGINE_SECRET
+    );
+
+    await startMeasurementService('session-id-001');
+    await new Promise<void>((r) => setTimeout(r, 200));
+
+    // 성공 경로에서 MEASURING 전이가 DB에 반영되어야 함
+    expect(Session.updateMany).toHaveBeenCalledWith(
+      { groupId: GROUP_ID },
+      expect.objectContaining({ status: 'MEASURING' })
+    );
+  });
+
+  // fix #2: startDualMeasurementByGroup canTransitionTo 가드 부재 회귀
+  // fix 전: experimentMode만 보고 상태 전이 가드 없음 → 측정 불가 상태에서도
+  //         start 진행. 본 테스트는 fix 전 RED(throw 기대인데 resolve됨).
+  it('전이 불가 상태에서 startDualMeasurementByGroup이 400 throw함', async () => {
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      2,
+      'http://de2:5002',
+      ENGINE_SECRET
+    );
+    (Session.find as jest.Mock).mockResolvedValue([
+      {
+        groupId: GROUP_ID,
+        experimentMode: 'DUAL_2PC',
+        status: 'MEASURING',
+        canTransitionTo: jest.fn().mockReturnValue(false),
+      },
+    ]);
+
+    await expect(startDualMeasurementByGroup(GROUP_ID)).rejects.toThrow(
+      /측정을 시작할 수 없습니다/
     );
   });
 });

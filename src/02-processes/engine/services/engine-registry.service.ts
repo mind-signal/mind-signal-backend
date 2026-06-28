@@ -16,14 +16,12 @@ const registeredCallbacks = new Map<string, Set<() => void>>();
 interface EngineRegistration {
   url: string;
   subjectIndex: number;
-  registeredAt: number;
 }
 
 // ===== Phase 17.6 — pending registry (LD-10) =====
 /** subjectIndex → pending entry (groupId 미정 상태) */
 interface PendingEntry {
   url: string;
-  registeredAt: number;
 }
 
 const pendingRegistry = new Map<1 | 2, PendingEntry>();
@@ -46,11 +44,6 @@ export const engineRegistryService = {
       throw new AppError('파이썬 데이터 엔진이 아직 등록되지 않았습니다.', 503);
     }
     return registeredEngineUrl;
-  },
-
-  /** 등록 상태 확인함 */
-  isRegistered(): boolean {
-    return registeredEngineUrl !== null;
   },
 
   // ===== 신규 메서드 — DUAL_2PC 전용 =====
@@ -80,7 +73,6 @@ export const engineRegistryService = {
     const registration: EngineRegistration = {
       url: engineUrl,
       subjectIndex,
-      registeredAt: Date.now(),
     };
 
     dualRegistry.get(groupId)!.set(subjectIndex, registration);
@@ -183,7 +175,7 @@ export const engineRegistryService = {
     if (secretKey !== config.dataEngine.secretKey) {
       throw new AppError('유효하지 않은 시크릿 키입니다.', 403);
     }
-    pendingRegistry.set(subjectIndex, { url, registeredAt: Date.now() });
+    pendingRegistry.set(subjectIndex, { url });
     console.log(`pending 등록 완료: subjectIndex=${subjectIndex}, url=${url}`);
   },
 

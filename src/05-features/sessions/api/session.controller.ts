@@ -30,10 +30,15 @@ export const createSession = async (
   next: NextFunction
 ) => {
   try {
-    const { groupId } = req.body; // 기존 그룹에 추가할 경우 groupId를 본문에서 받음
+    // 기존 그룹 추가 시 groupId, DUAL_2PC 등 모드 지정 시 experimentMode를 본문에서 받음
+    const { groupId, experimentMode } = req.body;
 
     // 비즈니스 프로세스 호출하여 세션 생성 수행함
-    const newSession = await createGroupSessionProcess(groupId, req.user?.id);
+    const newSession = await createGroupSessionProcess(
+      groupId,
+      req.user?.id,
+      experimentMode
+    );
 
     res.status(201).json({
       status: 'success',

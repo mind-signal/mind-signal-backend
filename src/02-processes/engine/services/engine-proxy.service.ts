@@ -216,57 +216,17 @@ export const engineProxyService = {
     return toCamelCaseKeys(data) as Record<string, unknown>;
   },
 
-  /**
-   * DUAL_2PC 파이프라인 분석 요청을 파이썬 엔진으로 프록시함 (v8 M-1 반영).
-   * subject 1 담당 DE를 analysis 전담으로 지정함.
-   * getEngineUrl() legacy 단일 slot 방식 금지 — getEngineUrlByGroupSubject(groupId, 1) 사용함.
-   *
-   * @param groupId - 실험 그룹 ID
-   * @param satisfactionScores - 피실험자별 만족도 점수 (선택)
-   * @param includeMarkdown - 마크다운 결과 포함 여부 (기본 false)
-   * @returns 분석 결과 (camelCase 변환됨)
-   * @throws AppError — 엔진 미등록 또는 분석 요청 실패 시
-   */
-  async analyzeDual2pcPipeline(
-    groupId: string,
-    satisfactionScores?: Record<number, number>,
-    includeMarkdown?: boolean
-  ): Promise<Record<string, unknown>> {
-    // v8 M-1: 두 DE 중 subject 1 담당 DE를 analysis 전담으로 지정
-    const engineUrl = engineRegistryService.getEngineUrlByGroupSubject(
-      groupId,
-      1
-    );
-    const response = await fetch(`${engineUrl}/api/analyze/pipeline`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Engine-Secret': config.dataEngine.secretKey,
-      },
-      body: JSON.stringify({
-        ['group_id']: groupId,
-        ['subject_indices']: [1, 2], // v7 C-1: DUAL_2PC는 1-based 고정
-        ['mode']: 'DUAL_2PC',
-        ['include_markdown']: includeMarkdown ?? false,
-        ['satisfaction_scores']: satisfactionScores,
-      }),
-    });
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new AppError(
-        `DUAL_2PC 파이프라인 분석 실패: ${response.status} ${errorText}`,
-        response.status
-      );
-    }
-    return toCamelCaseKeys(await response.json()) as Record<string, unknown>;
-  },
-
   /** 등록된 파이썬 엔진으로 EEG 스트리밍 종료 요청을 프록시함 */
   async streamStop(
     groupId: string,
     subjectIndex: number
   ): Promise<Record<string, unknown>> {
-    const engineUrl = engineRegistryService.getEngineUrl();
+    // DUAL_2PC는 subject별 dual 등록 URL 우선, 미등록(1PC/SEQUENTIAL)은 legacy slot 폴백함.
+    // getByGroup은 비throw — getEngineUrlByGroupSubject(503 throw) 대신 사용함.
+    const dualUrl = engineRegistryService
+      .getByGroup(groupId)
+      ?.get(subjectIndex)?.url;
+    const engineUrl = dualUrl ?? engineRegistryService.getEngineUrl();
 
     const response = await fetch(`${engineUrl}/api/stream/stop`, {
       method: 'POST',

@@ -164,9 +164,4 @@ describe('measurement.service.ts — BE-3: engine-proxy 5곳 호출 보존 검�
     // ADR-004: getEngineUrl 시그니처 유지, engine-proxy 5곳 호출 깨짐 방지
     expect(engineProxySource).toContain('getEngineUrl');
   });
-
-  it('engine-proxy.service.ts에 analyzeDual2pcPipeline 신규 메서드가 추가됨', () => {
-    // Wave 2에서 신규 메서드 추가됨
-    expect(engineProxySource).toContain('analyzeDual2pcPipeline');
-  });
 });

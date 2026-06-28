@@ -18,15 +18,6 @@ export function addOperatorJoinListener(cb: OperatorJoinCallback): void {
 }
 
 /**
- * operator join 완료 콜백 등록 해제함.
- *
- * @param cb - 제거할 콜백 함수
- */
-export function removeOperatorJoinListener(cb: OperatorJoinCallback): void {
-  operatorJoinListeners.delete(cb);
-}
-
-/**
  * [Service] operator join 프로세스 수행함.
  *
  * invite JWT 토큰을 검증하여 groupId와 experimentMode를 반환함.

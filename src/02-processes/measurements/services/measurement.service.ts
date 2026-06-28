@@ -184,6 +184,13 @@ function startDualMeasurement(groupId: string): void {
       ]);
       // ▲ 신규
 
+      // 두 DE 스트림 시작 성공 → 양쪽 세션 MEASURING 전이함 (상태머신 정합).
+      // 누락 시 세션이 PAIRED 잔류하여 stop이 PAIRED→COMPLETED 불가로 실패함.
+      await Session.updateMany(
+        { groupId },
+        { status: 'MEASURING', measuredAt: new Date() }
+      );
+
       // aligner registry에 인스턴스 생성
       timestampAlignerRegistry.getOrCreate(
         groupId,
@@ -245,6 +252,15 @@ export const startDualMeasurementByGroup = async (
   if (sessions[0].experimentMode !== 'DUAL_2PC') {
     throw new AppError(
       'groupId 기반 측정 시작은 DUAL_2PC 모드만 지원합니다.',
+      400
+    );
+  }
+
+  // 상태 전이 가드 — sessionId 경로(startMeasurementService)와 정합.
+  // MEASURING 잔류 세션 재트리거(중복 start) 차단함.
+  if (!sessions[0].canTransitionTo('MEASURING')) {
+    throw new AppError(
+      `현재 ${sessions[0].status} 상태에서는 측정을 시작할 수 없습니다.`,
       400
     );
   }
