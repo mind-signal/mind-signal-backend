@@ -53,6 +53,18 @@ async function connectDB() {
       );
     }
 
+    // ADR-011 MongoDB SRV DNS resolver fallback — env 활성화 시에만 적용함
+    // Node c-ares가 OS Wi-Fi 어댑터 DNS 변경을 후속 감지 안 함. mongoose는 mongodb+srv 파싱
+    // 시 내부에서 dns.promises.resolveSrv를 호출하여 c-ares 경로 사용. OS DNS 변경해도
+    // 미적용 함정 우회용 conditional override. production 환경 default off 유지함.
+    if (config.mongoSrvDnsServers && config.mongoSrvDnsServers.length > 0) {
+      const dns = await import('dns');
+      dns.setServers(config.mongoSrvDnsServers);
+      console.log(
+        `MongoDB SRV DNS resolver override 적용: ${config.mongoSrvDnsServers.join(', ')}`
+      );
+    }
+
     // Mongoose v8 기준 기본값을 사용하며 타임아웃만 명시한다.
     await mongoose.connect(mongoURI, {
       // 10초 내 연결 실패 시 에러
