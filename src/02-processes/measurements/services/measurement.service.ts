@@ -35,6 +35,9 @@ const groupSubscribers = new Map<string, RedisClientType[]>();
 /** DUAL_2PC groupId별 flush setInterval 핸들러 — unsubscribeGroupChannels에서 clearInterval */
 const groupFlushIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
+/** 진행 중인 DUAL_2PC 측정 groupId — 중복 트리거 차단 */
+const dualMeasurementInFlight = new Set<string>();
+
 // ---------------------------------------------------------------------------
 // 내부 헬퍼 — DUAL_2PC 전용
 // ---------------------------------------------------------------------------
@@ -170,6 +173,11 @@ async function waitForBothEngines(
  * @param groupId - 실험 그룹 ID
  */
 function startDualMeasurement(groupId: string): void {
+  // 동일 groupId 중복 호출 차단 — 원자적 동기 가드
+  if (dualMeasurementInFlight.has(groupId)) {
+    return;
+  }
+  dualMeasurementInFlight.add(groupId);
   (async () => {
     try {
       // 두 DE 등록 대기 (최대 60초) — 클라이언트에게는 이미 응답 반환됨
@@ -222,6 +230,8 @@ function startDualMeasurement(groupId: string): void {
         { groupId },
         { status: 'CANCELLED', stopReason: 'ProcessError' }
       );
+    } finally {
+      dualMeasurementInFlight.delete(groupId);
     }
   })();
 }
@@ -248,19 +258,19 @@ export const startDualMeasurementByGroup = async (
     throw new AppError('해당 groupId에 속한 세션을 찾을 수 없습니다.', 404);
   }
 
-  // experimentMode 검증 — DUAL_2PC만 허용함
-  if (sessions[0].experimentMode !== 'DUAL_2PC') {
+  // experimentMode 검증 — 그룹 내 모든 세션이 DUAL_2PC여야 함
+  if (!sessions.every((s) => s.experimentMode === 'DUAL_2PC')) {
     throw new AppError(
       'groupId 기반 측정 시작은 DUAL_2PC 모드만 지원합니다.',
       400
     );
   }
 
-  // 상태 전이 가드 — sessionId 경로(startMeasurementService)와 정합.
+  // 상태 전이 가드 — 그룹 내 모든 세션이 MEASURING으로 전이 가능해야 함.
   // MEASURING 잔류 세션 재트리거(중복 start) 차단함.
-  if (!sessions[0].canTransitionTo('MEASURING')) {
+  if (!sessions.every((s) => s.canTransitionTo('MEASURING'))) {
     throw new AppError(
-      `현재 ${sessions[0].status} 상태에서는 측정을 시작할 수 없습니다.`,
+      '그룹 내 전이 불가 세션이 존재하여 측정을 시작할 수 없습니다.',
       400
     );
   }

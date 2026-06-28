@@ -221,12 +221,21 @@ export const engineProxyService = {
     groupId: string,
     subjectIndex: number
   ): Promise<Record<string, unknown>> {
-    // DUAL_2PC는 subject별 dual 등록 URL 우선, 미등록(1PC/SEQUENTIAL)은 legacy slot 폴백함.
-    // getByGroup은 비throw — getEngineUrlByGroupSubject(503 throw) 대신 사용함.
-    const dualUrl = engineRegistryService
-      .getByGroup(groupId)
-      ?.get(subjectIndex)?.url;
-    const engineUrl = dualUrl ?? engineRegistryService.getEngineUrl();
+    // group 없으면 1PC/SEQUENTIAL legacy 폴백, group 있는데 slot 없으면 DUAL_2PC 미등록 — 503
+    const registrations = engineRegistryService.getByGroup(groupId);
+    let engineUrl: string;
+    if (!registrations) {
+      engineUrl = engineRegistryService.getEngineUrl();
+    } else {
+      const registration = registrations.get(subjectIndex);
+      if (!registration) {
+        throw new AppError(
+          `DUAL_2PC 엔진 미등록: groupId=${groupId}, subjectIndex=${subjectIndex}`,
+          503
+        );
+      }
+      engineUrl = registration.url;
+    }
 
     const response = await fetch(`${engineUrl}/api/stream/stop`, {
       method: 'POST',

@@ -310,3 +310,103 @@ describe('DUAL_2PC 측정 라이프사이클 회귀 재현', () => {
     );
   });
 });
+
+// ===========================================================================
+// 전체 세션 검증 — sessions.every() 가드 (RC-2 고쳐진 사항)
+// ===========================================================================
+
+describe('startDualMeasurementByGroup 전체 세션 검증', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    engineRegistryService.cleanupGroup(GROUP_ID);
+  });
+
+  it('두 세션 중 하나가 transition 불가면 400 throw함', async () => {
+    // Session.find가 두 세션 반환, 두 번째가 canTransitionTo=false
+    (Session.find as jest.Mock).mockResolvedValue([
+      {
+        groupId: GROUP_ID,
+        experimentMode: 'DUAL_2PC',
+        status: 'PAIRED',
+        canTransitionTo: jest.fn().mockReturnValue(true),
+      },
+      {
+        groupId: GROUP_ID,
+        experimentMode: 'DUAL_2PC',
+        status: 'MEASURING',
+        canTransitionTo: jest.fn().mockReturnValue(false),
+      },
+    ]);
+
+    await expect(startDualMeasurementByGroup(GROUP_ID)).rejects.toThrow(
+      /측정을 시작할 수 없습니다/
+    );
+  });
+
+  it('두 세션 중 하나가 비-DUAL_2PC면 400 throw함', async () => {
+    // Session.find가 두 세션 반환, 두 번째가 experimentMode != DUAL_2PC
+    (Session.find as jest.Mock).mockResolvedValue([
+      {
+        groupId: GROUP_ID,
+        experimentMode: 'DUAL_2PC',
+        status: 'PAIRED',
+        canTransitionTo: jest.fn().mockReturnValue(true),
+      },
+      {
+        groupId: GROUP_ID,
+        experimentMode: 'SEQUENTIAL',
+        status: 'PAIRED',
+        canTransitionTo: jest.fn().mockReturnValue(true),
+      },
+    ]);
+
+    await expect(startDualMeasurementByGroup(GROUP_ID)).rejects.toThrow(
+      /DUAL_2PC 모드만 지원합니다/
+    );
+  });
+});
+
+// ===========================================================================
+// 중복 트리거 차단 — dualMeasurementInFlight 가드 (RC-3 고쳐진 사항)
+// ===========================================================================
+
+describe('startDualMeasurement 중복 트리거 차단 (in-flight 가드)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    engineRegistryService.cleanupGroup(GROUP_ID);
+    // 두 DE 사전 등록 — waitForBothEngines 즉시 resolve 유도
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      2,
+      'http://de2:5002',
+      ENGINE_SECRET
+    );
+    (Session.find as jest.Mock).mockResolvedValue([
+      makeDualSession(GROUP_ID),
+      makeDualSession(GROUP_ID),
+    ]);
+    (Session.updateMany as jest.Mock).mockResolvedValue({ modifiedCount: 2 });
+  });
+
+  it('같은 groupId로 연속 2회 호출 시 streamStartDual은 정확히 2회만 호출됨', async () => {
+    // Act — 두 호출을 await 없이 동시에 시작해 in-flight 가드 작동 검증
+    const p1 = startDualMeasurementByGroup(GROUP_ID);
+    const p2 = startDualMeasurementByGroup(GROUP_ID);
+    await Promise.all([p1, p2]);
+
+    // fire-and-forget IIFE 완료 대기
+    await new Promise<void>((r) => setTimeout(r, 300));
+
+    // Assert — streamStartDual은 subject 1, 2 각 1회씩 총 2회만 호출됨
+    const { engineProxyService } = jest.requireMock(
+      '@02-processes/engine/services/engine-proxy.service'
+    );
+    expect(engineProxyService.streamStartDual).toHaveBeenCalledTimes(2);
+  });
+});

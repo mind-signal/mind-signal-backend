@@ -68,4 +68,19 @@ describe('engineProxyService.streamStop — DUAL_2PC URL 해석', () => {
       expect.objectContaining({ method: 'POST' })
     );
   });
+
+  it('dual group 존재하나 slot 없으면 503 throw함', async () => {
+    // subject 1만 등록 — subject 2 slot 없음
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+
+    await expect(
+      engineProxyService.streamStop(GROUP_ID, 2)
+    ).rejects.toMatchObject({ statusCode: 503 });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
 });

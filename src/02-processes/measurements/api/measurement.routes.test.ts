@@ -218,5 +218,7 @@ describe('POST /groups/:groupId/eeg/stream:start — DUAL_2PC 그룹 기반 측�
       '/groups/invalid-group-id/eeg/stream:start'
     );
     expect(res.status).toBe(400);
+    // validateParams가 short-circuit하여 서비스 미호출 확인
+    expect(mockedStartDualMeasurementByGroup).not.toHaveBeenCalled();
   });
 });
