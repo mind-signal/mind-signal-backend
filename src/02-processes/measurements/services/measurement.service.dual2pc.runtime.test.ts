@@ -440,6 +440,88 @@ describe('F1 — 새 그룹 시작 시 stale 그룹 aligner teardown', () => {
   });
 });
 
+// ===========================================================================
+// F1b 회귀 재현 — startup in-flight 그룹 supersede (CodeRabbit #68)
+// teardownStaleGroups는 구독 완료 그룹만 보므로, OLD가 아직 waitForBothEngines
+// 단계면 정리 대상에서 빠짐. NEW 시작 후 OLD가 뒤늦게 resolve되면 두 번째 aligner를
+// 붙여 "단일 활성" 보장이 깨짐. supersede 가드로 차단되어야 함.
+// ===========================================================================
+
+describe('F1b — startup in-flight 그룹 supersede', () => {
+  const OLD = 'grp_f1b_old';
+  const NEW = 'grp_f1b_new';
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    engineRegistryService.cleanupGroup(OLD);
+    engineRegistryService.cleanupGroup(NEW);
+    (Session.updateMany as jest.Mock).mockResolvedValue({ modifiedCount: 2 });
+  });
+
+  it('OLD가 DE 대기 중일 때 NEW 시작 시 OLD는 superseded되어 aligner 미생성', async () => {
+    const { timestampAlignerRegistry } = jest.requireMock(
+      '@02-processes/measurements/services/timestamp-aligner.service'
+    );
+
+    // OLD: DE 미등록 → waitForBothEngines에서 대기 상태로 진입
+    (Session.find as jest.Mock).mockResolvedValue([
+      makeDualSession(OLD),
+      makeDualSession(OLD),
+    ]);
+    await startDualMeasurementByGroup(OLD);
+
+    // NEW: DE 등록 → 정상 완료 (activeDualGroup=NEW)
+    engineRegistryService.registerDual(
+      NEW,
+      1,
+      'http://de3:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      NEW,
+      2,
+      'http://de4:5002',
+      ENGINE_SECRET
+    );
+    (Session.find as jest.Mock).mockResolvedValue([
+      makeDualSession(NEW),
+      makeDualSession(NEW),
+    ]);
+    await startDualMeasurementByGroup(NEW);
+    await new Promise<void>((r) => setTimeout(r, 150));
+
+    // 뒤늦게 OLD DE 등록 → OLD waitForBothEngines resolve → supersede 가드 진입
+    engineRegistryService.registerDual(
+      OLD,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      OLD,
+      2,
+      'http://de2:5002',
+      ENGINE_SECRET
+    );
+    await new Promise<void>((r) => setTimeout(r, 300));
+
+    // NEW만 aligner 생성, OLD는 supersede되어 미생성
+    expect(timestampAlignerRegistry.getOrCreate).toHaveBeenCalledWith(
+      NEW,
+      expect.anything()
+    );
+    expect(timestampAlignerRegistry.getOrCreate).not.toHaveBeenCalledWith(
+      OLD,
+      expect.anything()
+    );
+    // superseded OLD 세션은 terminal cleanup(CANCELLED)으로 정리됨 (CodeRabbit #70)
+    expect(Session.updateMany).toHaveBeenCalledWith(
+      { groupId: OLD },
+      expect.objectContaining({ status: 'CANCELLED' })
+    );
+  });
+});
+
 describe('startDualMeasurement 중복 트리거 차단 (in-flight 가드)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
