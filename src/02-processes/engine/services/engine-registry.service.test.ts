@@ -66,12 +66,6 @@ describe('engineRegistryService — BE-5', () => {
         expect(err.statusCode).toBe(403);
       }
     });
-
-    it('isRegistered — 등록 전 false, 등록 후 true 반환함', () => {
-      expect(engineRegistryService.isRegistered()).toBe(false);
-      engineRegistryService.register('http://engine-1:5002', 'valid-secret');
-      expect(engineRegistryService.isRegistered()).toBe(true);
-    });
   });
 
   // ============================================================

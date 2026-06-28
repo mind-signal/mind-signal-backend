@@ -66,7 +66,6 @@ jest.mock('@05-features/sessions/services/pairing.service', () => ({
   }),
   addPairingCompleteListener: jest.fn(),
   firePairingCompleteListeners: jest.fn(),
-  removePairingCompleteListener: jest.fn(),
   pairDeviceProcess: jest.fn(),
 }));
 
@@ -233,9 +232,30 @@ describe('Reproduce: DUAL 모드 QR 미생성 버그 회귀 박제', () => {
       expect(res.body.data.groupId).toMatch(/^[0-9a-fA-F]{24}$/);
 
       // service가 groupId 없이 호출되었음을 확인 (신규 그룹 생성 경로)
+      // experimentMode 미전달 시 3번째 인자 undefined 전달됨 (BE default DUAL)
       expect(createGroupSessionProcess).toHaveBeenCalledWith(
         undefined,
-        '507f1f77bcf86cd799439011'
+        '507f1f77bcf86cd799439011',
+        undefined
+      );
+    });
+
+    it('experimentMode=DUAL_2PC 전달 시 service 3번째 인자로 전달됨 (생성부터 DUAL_2PC)', async () => {
+      // Arrange — DUAL_2PC 모드 세션 생성 요청
+      const body = { experimentMode: 'DUAL_2PC' };
+
+      // Act
+      const res = await request(app)
+        .post('/api/sessions')
+        .set('Authorization', TEST_JWT)
+        .send(body);
+
+      // Assert — 201 + experimentMode가 service에 전달됨
+      expect(res.status).toBe(201);
+      expect(createGroupSessionProcess).toHaveBeenCalledWith(
+        undefined,
+        '507f1f77bcf86cd799439011',
+        'DUAL_2PC'
       );
     });
 
@@ -254,7 +274,8 @@ describe('Reproduce: DUAL 모드 QR 미생성 버그 회귀 박제', () => {
       expect(res.status).toBe(201);
       expect(createGroupSessionProcess).toHaveBeenCalledWith(
         validObjectId,
-        '507f1f77bcf86cd799439011'
+        '507f1f77bcf86cd799439011',
+        undefined
       );
     });
 

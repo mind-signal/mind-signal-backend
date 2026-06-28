@@ -35,6 +35,9 @@ const groupSubscribers = new Map<string, RedisClientType[]>();
 /** DUAL_2PC groupId별 flush setInterval 핸들러 — unsubscribeGroupChannels에서 clearInterval */
 const groupFlushIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
+/** 진행 중인 DUAL_2PC 측정 groupId — 중복 트리거 차단 */
+const dualMeasurementInFlight = new Set<string>();
+
 // ---------------------------------------------------------------------------
 // 내부 헬퍼 — DUAL_2PC 전용
 // ---------------------------------------------------------------------------
@@ -170,6 +173,11 @@ async function waitForBothEngines(
  * @param groupId - 실험 그룹 ID
  */
 function startDualMeasurement(groupId: string): void {
+  // 동일 groupId 중복 호출 차단 — 원자적 동기 가드
+  if (dualMeasurementInFlight.has(groupId)) {
+    return;
+  }
+  dualMeasurementInFlight.add(groupId);
   (async () => {
     try {
       // 두 DE 등록 대기 (최대 60초) — 클라이언트에게는 이미 응답 반환됨
@@ -183,6 +191,13 @@ function startDualMeasurement(groupId: string): void {
         engineProxyService.streamStartDual(groupId, 2),
       ]);
       // ▲ 신규
+
+      // 두 DE 스트림 시작 성공 → 양쪽 세션 MEASURING 전이함 (상태머신 정합).
+      // 누락 시 세션이 PAIRED 잔류하여 stop이 PAIRED→COMPLETED 불가로 실패함.
+      await Session.updateMany(
+        { groupId },
+        { status: 'MEASURING', measuredAt: new Date() }
+      );
 
       // aligner registry에 인스턴스 생성
       timestampAlignerRegistry.getOrCreate(
@@ -215,6 +230,8 @@ function startDualMeasurement(groupId: string): void {
         { groupId },
         { status: 'CANCELLED', stopReason: 'ProcessError' }
       );
+    } finally {
+      dualMeasurementInFlight.delete(groupId);
     }
   })();
 }
@@ -222,6 +239,46 @@ function startDualMeasurement(groupId: string): void {
 // ---------------------------------------------------------------------------
 // 공개 서비스 함수
 // ---------------------------------------------------------------------------
+
+/**
+ * groupId 기반 DUAL_2PC 측정 시작 서비스.
+ * 오퍼레이터 대시보드가 sessionId 없이 groupId만 보유한 경우 사용함.
+ *
+ * @param groupId - 실험 그룹 ID
+ * @returns 그룹 ID 반환
+ * @throws AppError 404 — 해당 groupId의 세션 미존재
+ * @throws AppError 400 — experimentMode가 DUAL_2PC가 아님
+ */
+export const startDualMeasurementByGroup = async (
+  groupId: string
+): Promise<{ groupId: string }> => {
+  // groupId로 세션 목록 조회함
+  const sessions = await Session.find({ groupId });
+  if (sessions.length === 0) {
+    throw new AppError('해당 groupId에 속한 세션을 찾을 수 없습니다.', 404);
+  }
+
+  // experimentMode 검증 — 그룹 내 모든 세션이 DUAL_2PC여야 함
+  if (!sessions.every((s) => s.experimentMode === 'DUAL_2PC')) {
+    throw new AppError(
+      'groupId 기반 측정 시작은 DUAL_2PC 모드만 지원합니다.',
+      400
+    );
+  }
+
+  // 상태 전이 가드 — 그룹 내 모든 세션이 MEASURING으로 전이 가능해야 함.
+  // MEASURING 잔류 세션 재트리거(중복 start) 차단함.
+  if (!sessions.every((s) => s.canTransitionTo('MEASURING'))) {
+    throw new AppError(
+      '그룹 내 전이 불가 세션이 존재하여 측정을 시작할 수 없습니다.',
+      400
+    );
+  }
+
+  // fire-and-forget 실행 (기존 함수 재사용)
+  startDualMeasurement(groupId);
+  return { groupId };
+};
 
 /**
  * 뇌파 측정 시작 서비스 (discriminated union 반환, v5 N-9 반영).

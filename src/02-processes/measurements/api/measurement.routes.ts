@@ -2,7 +2,10 @@
 import { Router } from 'express';
 import measurementController from './measurement.controller';
 import { authenticate, validateParams } from '@07-shared/middlewares';
-import { measurementStartParamsSchema } from './measurement.schema';
+import {
+  measurementStartParamsSchema,
+  measurementGroupStartParamsSchema,
+} from './measurement.schema';
 
 const router = Router();
 
@@ -102,6 +105,92 @@ router.post(
   authenticate,
   validateParams(measurementStartParamsSchema),
   measurementController.startStreaming
+);
+
+/**
+ * @openapi
+ * /api/measurements/groups/{groupId}/eeg/stream:start:
+ *   post:
+ *     summary: DUAL_2PC 그룹 기반 측정 시작
+ *     description: |
+ *       오퍼레이터 대시보드가 sessionId 없이 groupId만 보유한 경우 사용함.
+ *       - groupId로 세션 존재 여부 및 experimentMode=DUAL_2PC 검증함.
+ *       - 검증 통과 시 fire-and-forget으로 DUAL_2PC 측정을 시작하고 202 반환함.
+ *     tags: [Measurements]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: groupId
+ *         required: true
+ *         description: 측정을 시작할 실험 그룹 ID(ObjectId)
+ *         schema:
+ *           type: string
+ *           example: "65c9f0b2a1b2c3d4e5f67890"
+ *     responses:
+ *       202:
+ *         description: 측정 시작 수락됨(fire-and-forget)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status: { type: string, example: "accepted" }
+ *                 groupId:
+ *                   type: string
+ *                   example: "65c9f0b2a1b2c3d4e5f67890"
+ *
+ *       400:
+ *         description: experimentMode가 DUAL_2PC가 아님
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status: { type: string, example: "fail" }
+ *                 message:
+ *                   type: string
+ *                   example: "groupId 기반 측정 시작은 DUAL_2PC 모드만 지원합니다."
+ *
+ *       401:
+ *         description: 인증 실패(토큰 누락/만료/비정상)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status: { type: string, example: "fail" }
+ *                 message: { type: string, example: "유효하지 않은 토큰입니다." }
+ *
+ *       404:
+ *         description: 해당 groupId의 세션을 찾을 수 없음
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status: { type: string, example: "fail" }
+ *                 message:
+ *                   type: string
+ *                   example: "해당 groupId에 속한 세션을 찾을 수 없습니다."
+ *
+ *       500:
+ *         description: 서버 오류
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status: { type: string, example: "error" }
+ *                 message:
+ *                   type: string
+ *                   example: "서버 내부에 예상치 못한 오류가 발생했습니다."
+ */
+router.post(
+  '/groups/:groupId/eeg/stream:start',
+  authenticate,
+  validateParams(measurementGroupStartParamsSchema),
+  measurementController.startStreamingByGroup
 );
 
 export default router;
