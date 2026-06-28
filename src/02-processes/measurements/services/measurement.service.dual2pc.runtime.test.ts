@@ -370,6 +370,76 @@ describe('startDualMeasurementByGroup 전체 세션 검증', () => {
 // 중복 트리거 차단 — dualMeasurementInFlight 가드 (RC-3 고쳐진 사항)
 // ===========================================================================
 
+// ===========================================================================
+// F1 회귀 재현 — 새 그룹 시작 시 stale 그룹 aligner teardown
+// (차트 0건 근본원인: 이전 run의 aligner가 allCompleted stop 없이 잔존하여
+//  옛 room으로 계속 aligned_pair emit. 새 그룹 시작 시 타 그룹 정리되어야 함.)
+// ===========================================================================
+
+describe('F1 — 새 그룹 시작 시 stale 그룹 aligner teardown', () => {
+  const OLD = 'grp_f1_old';
+  const NEW = 'grp_f1_new';
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    engineRegistryService.cleanupGroup(OLD);
+    engineRegistryService.cleanupGroup(NEW);
+    (Session.updateMany as jest.Mock).mockResolvedValue({ modifiedCount: 2 });
+  });
+
+  it('OLD 그룹 측정 중 NEW 그룹 시작 시 OLD aligner를 cleanup하고 NEW는 보존함', async () => {
+    const { timestampAlignerRegistry } = jest.requireMock(
+      '@02-processes/measurements/services/timestamp-aligner.service'
+    );
+
+    // OLD 측정 시작 — subscribeWithAligner(OLD)까지 진행되어 활성 그룹 등록됨
+    (Session.find as jest.Mock).mockResolvedValue([
+      makeDualSession(OLD),
+      makeDualSession(OLD),
+    ]);
+    engineRegistryService.registerDual(
+      OLD,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      OLD,
+      2,
+      'http://de2:5002',
+      ENGINE_SECRET
+    );
+    await startDualMeasurementByGroup(OLD);
+    await new Promise<void>((r) => setTimeout(r, 200));
+
+    timestampAlignerRegistry.cleanup.mockClear();
+
+    // NEW 측정 시작 — 타 그룹(OLD) teardown 발동 기대
+    (Session.find as jest.Mock).mockResolvedValue([
+      makeDualSession(NEW),
+      makeDualSession(NEW),
+    ]);
+    engineRegistryService.registerDual(
+      NEW,
+      1,
+      'http://de3:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      NEW,
+      2,
+      'http://de4:5002',
+      ENGINE_SECRET
+    );
+    await startDualMeasurementByGroup(NEW);
+    await new Promise<void>((r) => setTimeout(r, 200));
+
+    // OLD aligner는 정리, NEW(현재 그룹)는 정리 대상 아님
+    expect(timestampAlignerRegistry.cleanup).toHaveBeenCalledWith(OLD);
+    expect(timestampAlignerRegistry.cleanup).not.toHaveBeenCalledWith(NEW);
+  });
+});
+
 describe('startDualMeasurement 중복 트리거 차단 (in-flight 가드)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
