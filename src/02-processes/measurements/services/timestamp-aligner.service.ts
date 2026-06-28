@@ -111,27 +111,6 @@ class TimestampAligner {
     const usedIdx1 = new Set<number>();
     const usedIdx2 = new Set<number>();
 
-    // 단일 헤드셋 지원 — subject 1 미수신 시 subject 2 단독 emit함
-    // ponytail: subject 2 방향만 처리. 데모는 subject 1=operator(헤드셋 없음) 고정.
-    // 양쪽 다 있으면 아래 그리디 매칭 경로(불변)로 진입함.
-    if (fresh1.length === 0 && fresh2.length > 0) {
-      /* eslint-disable camelcase */
-      for (const entry2 of fresh2) {
-        const sample: AlignedSample = {
-          groupId: this.groupId,
-          timestamp_ms: entry2.ts,
-          subject_1: null,
-          subject_2: entry2.sample,
-        };
-        aligned.push(sample);
-        SocketService.emitToGroup(this.groupId, 'aligned_pair', sample);
-      }
-      /* eslint-enable camelcase */
-      this.buffer.set(1, []);
-      this.buffer.set(2, []);
-      return aligned;
-    }
-
     for (let i1 = 0; i1 < fresh1.length; i1++) {
       const entry1 = fresh1[i1];
       let bestIdx = -1;
@@ -170,8 +149,30 @@ class TimestampAligner {
     const newBuf1 = fresh1.filter((_, idx) => !usedIdx1.has(idx));
     const newBuf2 = fresh2.filter((_, idx) => !usedIdx2.has(idx));
 
+    // 단일 헤드셋 지원 — subject 1이 버퍼에 없고, subject 2 샘플이 페어링 윈도
+    // (toleranceMs) 를 넘겨 대기한 경우에만 단독 emit함. buffer 비움이 아니라
+    // "tolerance 초과 미매칭"을 신호로 써서 subject 1의 일시적 지연을 single-headset
+    // 으로 오판하지 않음 (CodeRabbit #68). 윈도 내 어린 샘플은 유지해 late pair 허용.
+    const keptBuf2: BufferEntry[] = [];
+    for (const entry2 of newBuf2) {
+      if (newBuf1.length === 0 && now - entry2.ts > this.toleranceMs) {
+        /* eslint-disable camelcase */
+        const sample: AlignedSample = {
+          groupId: this.groupId,
+          timestamp_ms: entry2.ts,
+          subject_1: null,
+          subject_2: entry2.sample,
+        };
+        /* eslint-enable camelcase */
+        aligned.push(sample);
+        SocketService.emitToGroup(this.groupId, 'aligned_pair', sample);
+      } else {
+        keptBuf2.push(entry2);
+      }
+    }
+
     this.buffer.set(1, newBuf1);
-    this.buffer.set(2, newBuf2);
+    this.buffer.set(2, keptBuf2);
 
     return aligned;
   }
