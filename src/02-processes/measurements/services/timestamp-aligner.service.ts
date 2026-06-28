@@ -111,6 +111,27 @@ class TimestampAligner {
     const usedIdx1 = new Set<number>();
     const usedIdx2 = new Set<number>();
 
+    // 단일 헤드셋 지원 — subject 1 미수신 시 subject 2 단독 emit함
+    // ponytail: subject 2 방향만 처리. 데모는 subject 1=operator(헤드셋 없음) 고정.
+    // 양쪽 다 있으면 아래 그리디 매칭 경로(불변)로 진입함.
+    if (fresh1.length === 0 && fresh2.length > 0) {
+      /* eslint-disable camelcase */
+      for (const entry2 of fresh2) {
+        const sample: AlignedSample = {
+          groupId: this.groupId,
+          timestamp_ms: entry2.ts,
+          subject_1: null,
+          subject_2: entry2.sample,
+        };
+        aligned.push(sample);
+        SocketService.emitToGroup(this.groupId, 'aligned_pair', sample);
+      }
+      /* eslint-enable camelcase */
+      this.buffer.set(1, []);
+      this.buffer.set(2, []);
+      return aligned;
+    }
+
     for (let i1 = 0; i1 < fresh1.length; i1++) {
       const entry1 = fresh1[i1];
       let bestIdx = -1;

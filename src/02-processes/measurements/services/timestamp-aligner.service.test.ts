@@ -249,6 +249,46 @@ describe('timestampAlignerRegistry — BE-aligner', () => {
   });
 
   // ============================================================
+  // 단일 헤드셋 지원 — subject 2 단독 emit
+  // ============================================================
+
+  describe('단일 헤드셋 — subject 2 단독 emit', () => {
+    it('subject 2만 수신(subject 1 없음) → subject_1:null, subject_2:sample로 emit됨', () => {
+      // Arrange — subject 1 헤드셋 없음, subject 2(노트북 B)만 측정
+      const groupId = 'grp-single2';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      const sample2 = makeSample(2.0);
+
+      // Act
+      timestampAlignerRegistry.ingest(groupId, 2, sample2, Date.now());
+      const result = timestampAlignerRegistry.flush(groupId);
+
+      // Assert
+      expect(result).toHaveLength(1);
+      expect(result[0].subject_1).toBeNull();
+      expect(result[0].subject_2).toEqual(sample2);
+      expect(mockEmitToGroup).toHaveBeenCalledTimes(1);
+      expect(mockEmitToGroup.mock.calls[0][1]).toBe('aligned_pair');
+    });
+
+    it('subject 2 단독 emit 후 버퍼 비워짐 — 다음 flush 재emit 없음', () => {
+      // Arrange
+      const groupId = 'grp-single2-clear';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      timestampAlignerRegistry.ingest(groupId, 2, makeSample(2.0), Date.now());
+
+      // Act — 1차 flush에서 단독 emit
+      timestampAlignerRegistry.flush(groupId);
+      mockEmitToGroup.mockClear();
+      const second = timestampAlignerRegistry.flush(groupId);
+
+      // Assert — 2차 flush는 빈 배열 + emit 없음
+      expect(second).toHaveLength(0);
+      expect(mockEmitToGroup).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
   // v8 C-1: brain_sync_all 타입 가드 소스 검증
   // ============================================================
 
