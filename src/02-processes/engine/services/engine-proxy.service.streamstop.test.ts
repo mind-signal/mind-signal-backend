@@ -69,7 +69,10 @@ describe('engineProxyService.streamStop — DUAL_2PC URL 해석', () => {
     );
   });
 
-  it('dual group 존재하나 slot 없으면 503 throw함', async () => {
+  it('dual group 존재하나 slot 없으면 503 throw함 (legacy 오인 폴백 방지)', async () => {
+    // legacy 슬롯이 등록돼 있어도, group은 있고 slot만 비면 legacy로 폴백하면 안 됨.
+    // 폴백하면 엉뚱한 엔진에 stop을 보내므로, 이 등록으로 order-독립 재현을 보장함.
+    engineRegistryService.register('http://legacy:5002', ENGINE_SECRET);
     // subject 1만 등록 — subject 2 slot 없음
     engineRegistryService.registerDual(
       GROUP_ID,
@@ -81,6 +84,7 @@ describe('engineProxyService.streamStop — DUAL_2PC URL 해석', () => {
     await expect(
       engineProxyService.streamStop(GROUP_ID, 2)
     ).rejects.toMatchObject({ statusCode: 503 });
+    // legacy로 stop을 보내지 않아야 함
     expect(global.fetch).not.toHaveBeenCalled();
   });
 });
