@@ -514,6 +514,11 @@ describe('F1b — startup in-flight 그룹 supersede', () => {
       OLD,
       expect.anything()
     );
+    // superseded OLD 세션은 terminal cleanup(CANCELLED)으로 정리됨 (CodeRabbit #70)
+    expect(Session.updateMany).toHaveBeenCalledWith(
+      { groupId: OLD },
+      expect.objectContaining({ status: 'CANCELLED' })
+    );
   });
 });
 

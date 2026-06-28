@@ -219,9 +219,13 @@ function startDualMeasurement(groupId: string): void {
 
       // 대기 중 다른 그룹이 시작되면 이 그룹은 superseded — 재구독 방지 (F1b).
       // teardownStaleGroups는 구독 완료 그룹만 정리하므로 startup in-flight는 여기서 차단함.
+      // return 대신 throw로 아래 catch의 terminal cleanup(세션 CANCELLED + 실패 emit)을
+      // 경유함 — 선점된 그룹 세션이 PAIRED 잔류해 이후 흐름 꼬이는 것 방지함 (CodeRabbit #70).
       if (activeDualGroup !== groupId) {
-        engineRegistryService.cleanupGroup(groupId);
-        return;
+        throw new AppError(
+          'DUAL_2PC 측정이 다른 그룹 시작으로 선점되었습니다.',
+          409
+        );
       }
 
       // ▼ 신규 (T17-4): 두 DE에 streamStart 병렬 호출
