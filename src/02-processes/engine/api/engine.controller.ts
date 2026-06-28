@@ -3,6 +3,7 @@ import { engineRegistryService } from '../services/engine-registry.service';
 import { engineProxyService } from '../services/engine-proxy.service';
 import { dualTriggerService } from '../services/dual-2pc-trigger.service';
 import { stopMeasurementService } from '@02-processes/measurements/services/measurement.service';
+import { saveUploadedCsv } from '../services/csv-upload.service';
 import { AppError } from '@07-shared/errors';
 import { SocketService } from '@07-shared/lib/socket';
 
@@ -117,6 +118,19 @@ export const engineController = {
         message: 'DUAL_2PC 엔진 등록 완료',
         registeredCount: group?.size ?? 0,
       });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /** 노트북 B DE가 업로드한 subject CSV를 operator csv 폴더에 저장함 (2-PC 집계) */
+  csvUpload: (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const secretKey = req.header('x-engine-secret') ?? '';
+      const filename = String(req.query.filename ?? '');
+      const content = typeof req.body === 'string' ? req.body : '';
+      saveUploadedCsv({ secretKey, filename, content });
+      res.status(200).json({ status: 'success', message: 'CSV 업로드 완료' });
     } catch (error) {
       next(error);
     }

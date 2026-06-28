@@ -36,9 +36,12 @@ export const engineProxyService = {
       bandCols?: string[];
     },
     satisfactionScores?: Record<number, number>,
-    includeMarkdown?: boolean
+    includeMarkdown?: boolean,
+    engineUrlOverride?: string
   ): Promise<Record<string, unknown>> {
-    const engineUrl = engineRegistryService.getEngineUrl();
+    // 2-PC는 양쪽 DE가 legacy 단일 slot에 등록해 getEngineUrl()이 레이스임.
+    // CSV가 집계된 operator 로컬 DE로 분석을 고정하려면 override를 사용함.
+    const engineUrl = engineUrlOverride ?? engineRegistryService.getEngineUrl();
 
     const response = await fetch(`${engineUrl}/api/analyze/pipeline`, {
       method: 'POST',

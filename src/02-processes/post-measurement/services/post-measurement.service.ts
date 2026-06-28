@@ -4,6 +4,7 @@ import { MatchingPool } from '@06-entities/matching-pools';
 import { EegRecord } from '@06-entities/eeg-records';
 import { Consent } from '@06-entities/consents';
 import { engineProxyService } from '@02-processes/engine/services/engine-proxy.service';
+import { config } from '@07-shared/config/config';
 
 /**
  * 포스트-측정 오케스트레이션 파이프라인 수행함
@@ -63,12 +64,19 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
   let matchingScore = 0;
 
   try {
+    // DUAL_2PC는 CSV가 operator로 집계되므로 분석을 operator 로컬 DE로 고정함.
+    // (양쪽 DE가 legacy 단일 slot에 등록해 getEngineUrl()이 레이스이기 때문)
+    const analysisEngineUrl =
+      session1.experimentMode === 'DUAL_2PC'
+        ? config.dataEngine.baseUrl
+        : undefined;
     pipelineResult = await engineProxyService.analyzePipeline(
       groupId,
       [1, 2],
       undefined,
       undefined,
-      true
+      true,
+      analysisEngineUrl
     );
 
     synchronyScore = (pipelineResult.synchronyScore as number) ?? null;
