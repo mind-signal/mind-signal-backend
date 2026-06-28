@@ -38,6 +38,9 @@ const groupFlushIntervals = new Map<string, ReturnType<typeof setInterval>>();
 /** 진행 중인 DUAL_2PC 측정 groupId — 중복 트리거 차단 */
 const dualMeasurementInFlight = new Set<string>();
 
+/** 가장 최근 시작된 DUAL_2PC 그룹 — startup in-flight supersede 판정용 (F1b) */
+let activeDualGroup: string | null = null;
+
 // ---------------------------------------------------------------------------
 // 내부 헬퍼 — DUAL_2PC 전용
 // ---------------------------------------------------------------------------
@@ -204,6 +207,8 @@ function startDualMeasurement(groupId: string): void {
     return;
   }
   dualMeasurementInFlight.add(groupId);
+  // 최신 시작 그룹 기록 — 대기 중 superseded 판정용 (F1b)
+  activeDualGroup = groupId;
   (async () => {
     try {
       // 새 측정 시작 전 stale 그룹 aligner/구독 정리 — 단일 활성 보장 (F1)
@@ -211,6 +216,13 @@ function startDualMeasurement(groupId: string): void {
 
       // 두 DE 등록 대기 (최대 60초) — 클라이언트에게는 이미 응답 반환됨
       await waitForBothEngines(groupId, config.dualPc.registrationTimeoutMs);
+
+      // 대기 중 다른 그룹이 시작되면 이 그룹은 superseded — 재구독 방지 (F1b).
+      // teardownStaleGroups는 구독 완료 그룹만 정리하므로 startup in-flight는 여기서 차단함.
+      if (activeDualGroup !== groupId) {
+        engineRegistryService.cleanupGroup(groupId);
+        return;
+      }
 
       // ▼ 신규 (T17-4): 두 DE에 streamStart 병렬 호출
       const { engineProxyService } =

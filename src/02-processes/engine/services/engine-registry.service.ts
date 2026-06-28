@@ -185,6 +185,8 @@ export const engineRegistryService = {
       if (existing && existing.url !== url) {
         group.delete(subjectIndex);
         if (group.size === 0) {
+          // cleanupGroup과 동일하게 콜백도 정리 — 재사용 groupId의 죽은 콜백 호출 방지함
+          registeredCallbacks.delete(gid);
           dualRegistry.delete(gid);
         }
       }

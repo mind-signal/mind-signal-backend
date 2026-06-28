@@ -350,5 +350,35 @@ describe('engineRegistryService — BE-5', () => {
         engineRegistryService.getEngineUrlByGroupSubject('grp-old', 2)
       ).toBe('http://old2:5002');
     });
+
+    it('빈 그룹 삭제 시 registeredCallbacks도 정리해 죽은 콜백 재호출 방지함', () => {
+      // CodeRabbit #68: dualRegistry만 지우면 registeredCallbacks 잔존 →
+      // 같은 groupId 재사용 시 종료된 flow의 onRegistered 콜백이 다시 호출됨.
+      engineRegistryService.registerDual(
+        'grp-stale-cb',
+        1,
+        'http://old:5002',
+        'valid-secret'
+      );
+      const staleCb = jest.fn();
+      engineRegistryService.onRegistered('grp-stale-cb', staleCb);
+
+      // 다른 url로 pending 재등록 → subject 1 evict → 그룹 비어 삭제
+      engineRegistryService.registerPending(
+        1,
+        'http://new:5002',
+        'valid-secret'
+      );
+      staleCb.mockClear();
+
+      // 같은 groupId 재사용 — 죽은 콜백이 호출되면 안 됨
+      engineRegistryService.registerDual(
+        'grp-stale-cb',
+        1,
+        'http://reuse:5002',
+        'valid-secret'
+      );
+      expect(staleCb).not.toHaveBeenCalled();
+    });
   });
 });
