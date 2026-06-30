@@ -10,11 +10,22 @@ import { config } from '@07-shared/config/config';
 import { SocketService } from '@07-shared/lib/socket';
 import { AuthProviderRegistry } from '@05-features/auth/services/providers/auth-provider.registry';
 import { registerPairingTriggerListener } from '@01-app/startup-listeners';
+import { healthCheck } from '@01-app/health.controller';
+import { registerStatic } from '@01-app/static';
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
+
+// 대시보드 정적 파일 서빙함 (public/dashboard.html)
+registerStatic(app);
+
+// 대시보드용 집계 헬스체크 (root 레벨, CORS 불필요).
+// 운영 정보(redis 상태, 내부 서비스 가용성) 노출 방지를 위해 비-production에서만 등록함.
+if (!config.isProduction) {
+  app.get('/health', healthCheck);
+}
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
 app.use('/api', indexRouter);

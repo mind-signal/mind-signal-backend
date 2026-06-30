@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>MindSignal 2-PC 상태</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 2rem;
+      }
+      h1 {
+        font-size: 1.2rem;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.4rem 0;
+        font-size: 1rem;
+      }
+      .dot {
+        width: 0.9rem;
+        height: 0.9rem;
+        border-radius: 50%;
+        background: #999;
+      }
+      .up {
+        background: #2e7d32;
+      }
+      .down {
+        background: #c62828;
+      }
+      .ts {
+        color: #666;
+        font-size: 0.8rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>MindSignal 2-PC 상태 <span class="ts" id="ts"></span></h1>
+    <div id="list"></div>
+    <script>
+      const ROWS = [
+        ['redis', 'Redis(operator)'],
+        ['data-engine-A', '데이터엔진 A(operator)'],
+        ['proxy', 'Proxy(operator)'],
+        ['frontend', 'Frontend'],
+        ['data-engine-B', '데이터엔진 B(노트북B, Tailscale)'],
+      ];
+      function render(state) {
+        document.getElementById('list').innerHTML = ROWS.map(
+          ([key, label]) => {
+            const v = state[key];
+            const cls =
+              v === 'ok' || v === 'up' ? 'up' : v === undefined ? '' : 'down';
+            const txt =
+              v === undefined ? '미확인' : cls === 'up' ? '정상' : '다운';
+            return (
+              '<div class="row"><span class="dot ' +
+              cls +
+              '"></span>' +
+              label +
+              ': ' +
+              txt +
+              '</div>'
+            );
+          }
+        ).join('');
+        document.getElementById('ts').textContent =
+          new Date().toLocaleTimeString('ko-KR');
+      }
+      async function refresh() {
+        try {
+          const r = await fetch('/health', { signal: AbortSignal.timeout(3000) });
+          const body = await r.json();
+          const d = body.data || {};
+          render({ redis: d.redis, ...(d.services || {}) });
+        } catch {
+          render({}); // BE 자체가 다운이면 전부 미확인
+        }
+      }
+      setInterval(refresh, 5000);
+      refresh();
+    </script>
+  </body>
+</html>
