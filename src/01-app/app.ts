@@ -11,11 +11,15 @@ import { SocketService } from '@07-shared/lib/socket';
 import { AuthProviderRegistry } from '@05-features/auth/services/providers/auth-provider.registry';
 import { registerPairingTriggerListener } from '@01-app/startup-listeners';
 import { healthCheck } from '@01-app/health.controller';
+import { registerStatic } from '@01-app/static';
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
+
+// 대시보드 정적 파일 서빙함 (public/dashboard.html)
+registerStatic(app);
 
 // 대시보드용 집계 헬스체크 (root 레벨, CORS 불필요)
 app.get('/health', healthCheck);
