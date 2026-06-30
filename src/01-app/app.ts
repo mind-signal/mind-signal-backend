@@ -10,11 +10,15 @@ import { config } from '@07-shared/config/config';
 import { SocketService } from '@07-shared/lib/socket';
 import { AuthProviderRegistry } from '@05-features/auth/services/providers/auth-provider.registry';
 import { registerPairingTriggerListener } from '@01-app/startup-listeners';
+import { healthCheck } from '@01-app/health.controller';
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
+
+// 대시보드용 집계 헬스체크 (root 레벨, CORS 불필요)
+app.get('/health', healthCheck);
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
 app.use('/api', indexRouter);
