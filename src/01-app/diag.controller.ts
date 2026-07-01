@@ -22,6 +22,20 @@ function isLoopback(req: Request): boolean {
   );
 }
 
+// CSRF 방어 — 전역 cors() 하에서 악성 사이트가 브라우저로 localhost 액션을 호출하는 것 차단함.
+// Origin 헤더가 있으면 대시보드 동일 출처만 허용, 없으면(same-origin GET/curl) loopback 게이트로 충분함.
+const ALLOWED_ORIGINS = ['http://localhost:5000', 'http://127.0.0.1:5000'];
+function isSameOrigin(req: Request): boolean {
+  const origin = req.get('origin');
+  if (!origin) return true;
+  return ALLOWED_ORIGINS.includes(origin);
+}
+
+// 진단 API 접근 가드 — loopback + 동일 출처 둘 다 통과해야 함
+function denyUnsafe(req: Request): boolean {
+  return !isLoopback(req) || !isSameOrigin(req);
+}
+
 interface DeHealth {
   reachable: boolean;
   registeredGroupId: string | null;
@@ -91,8 +105,10 @@ async function releaseDe(url: string): Promise<unknown> {
  * 집계 진단 스냅샷 반환함 — groupId 일치확인 + pending + 그룹 목록 (대시보드 진단 패널용).
  */
 export const diagStatus: RequestHandler = async (req, res) => {
-  if (!isLoopback(req)) {
-    return res.status(403).json({ status: 'fail', message: 'loopback only' });
+  if (denyUnsafe(req)) {
+    return res
+      .status(403)
+      .json({ status: 'fail', message: 'loopback + same-origin only' });
   }
 
   const [deA, deB] = await Promise.all([
@@ -227,8 +243,10 @@ async function actionRestartDeA(): Promise<unknown> {
  * 진단/수정 액션 실행함 — 고정 화이트리스트, localhost 전용.
  */
 export const diagAction: RequestHandler = async (req, res) => {
-  if (!isLoopback(req)) {
-    return res.status(403).json({ status: 'fail', message: 'loopback only' });
+  if (denyUnsafe(req)) {
+    return res
+      .status(403)
+      .json({ status: 'fail', message: 'loopback + same-origin only' });
   }
   const name = req.params.name;
   const tail = Math.min(Number(req.query.tail) || 200, 1000);

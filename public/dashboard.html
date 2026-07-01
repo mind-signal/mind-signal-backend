@@ -159,7 +159,21 @@
       refresh();
 
       // ── groupId 일치확인 패널 ──
-      const short = (g) => (g ? '<code>' + g + '</code>' : '<span class="muted">없음</span>');
+      // XSS 방어 — DE/로그 응답·예외 문자열을 innerHTML에 넣기 전 escape
+      const esc = (s) =>
+        String(s).replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              '&': '&amp;',
+              '<': '&lt;',
+              '>': '&gt;',
+              '"': '&quot;',
+              "'": '&#39;',
+            })[c]
+        );
+      const short = (g) =>
+        g ? '<code>' + esc(g) + '</code>' : '<span class="muted">없음</span>';
       async function loadDiag() {
         const el = document.getElementById('diag');
         el.innerHTML = '<span class="muted">조회 중…</span>';
@@ -171,7 +185,7 @@
             ? '<span class="badge ok">일치 ✓</span>'
             : '<span class="badge bad">불일치 ⚠️ (' + m.distinct.length + '개 groupId)</span>';
           const pending = (d.pendingSubjects || [])
-            .map((p) => 'subject' + p.subjectIndex + ' <code>' + p.url + '</code>')
+            .map((p) => 'subject' + p.subjectIndex + ' <code>' + esc(p.url) + '</code>')
             .join('<br/>') || '<span class="muted">없음</span>';
           const groups = (d.registeredGroups || [])
             .map((g) => short(g.groupId) + ' → subjects [' + g.subjects.join(',') + ']')
@@ -191,7 +205,7 @@
           document.getElementById('diagTs').textContent =
             new Date().toLocaleTimeString('ko-KR');
         } catch (e) {
-          el.innerHTML = '<span class="badge bad">조회 실패</span> ' + e;
+          el.innerHTML = '<span class="badge bad">조회 실패</span> ' + esc(e);
         }
       }
 

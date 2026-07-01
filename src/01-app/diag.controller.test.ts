@@ -61,4 +61,11 @@ describe('POST /diag/action/:name', () => {
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveProperty('error');
   });
+
+  it('허용되지 않은 Origin(CSRF)은 403 반환함', async () => {
+    const res = await request(buildApp())
+      .post('/diag/action/release-all')
+      .set('Origin', 'https://evil.example');
+    expect(res.status).toBe(403);
+  });
 });
