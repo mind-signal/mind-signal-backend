@@ -41,6 +41,9 @@ const dualMeasurementInFlight = new Set<string>();
 /** 가장 최근 시작된 DUAL_2PC 그룹 — startup in-flight supersede 판정용 (F1b) */
 let activeDualGroup: string | null = null;
 
+/** 현재 활성 DUAL_2PC 그룹 반환함 — 진단 대시보드 groupId 일치확인용 */
+export const getActiveDualGroup = (): string | null => activeDualGroup;
+
 // ---------------------------------------------------------------------------
 // 내부 헬퍼 — DUAL_2PC 전용
 // ---------------------------------------------------------------------------

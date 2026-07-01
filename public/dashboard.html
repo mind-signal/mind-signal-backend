@@ -7,9 +7,16 @@
       body {
         font-family: system-ui, sans-serif;
         margin: 2rem;
+        max-width: 900px;
       }
       h1 {
         font-size: 1.2rem;
+      }
+      h2 {
+        font-size: 1rem;
+        margin-top: 1.6rem;
+        border-top: 1px solid #ddd;
+        padding-top: 1rem;
       }
       .row {
         display: flex;
@@ -34,11 +41,83 @@
         color: #666;
         font-size: 0.8rem;
       }
+      .badge {
+        display: inline-block;
+        padding: 0.2rem 0.6rem;
+        border-radius: 0.4rem;
+        font-weight: 600;
+        color: #fff;
+      }
+      .badge.ok {
+        background: #2e7d32;
+      }
+      .badge.bad {
+        background: #c62828;
+      }
+      table {
+        border-collapse: collapse;
+        margin: 0.5rem 0;
+        font-size: 0.9rem;
+      }
+      td,
+      th {
+        border: 1px solid #ddd;
+        padding: 0.3rem 0.6rem;
+        text-align: left;
+      }
+      code {
+        font-family: ui-monospace, monospace;
+        font-size: 0.85rem;
+      }
+      button {
+        margin: 0.2rem 0.3rem 0.2rem 0;
+        padding: 0.4rem 0.7rem;
+        font-size: 0.85rem;
+        cursor: pointer;
+        border: 1px solid #bbb;
+        border-radius: 0.4rem;
+        background: #f7f7f7;
+      }
+      button.danger {
+        border-color: #c62828;
+        color: #c62828;
+      }
+      pre#out {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 0.8rem;
+        border-radius: 0.4rem;
+        max-height: 320px;
+        overflow: auto;
+        font-size: 0.8rem;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .muted {
+        color: #888;
+      }
     </style>
   </head>
   <body>
     <h1>MindSignal 2-PC 상태 <span class="ts" id="ts"></span></h1>
     <div id="list"></div>
+
+    <h2>groupId 일치 확인 <span class="ts" id="diagTs"></span></h2>
+    <div id="diag"><span class="muted">진단 새로고침을 눌러 조회</span></div>
+
+    <h2>진단 · 수정 액션</h2>
+    <div id="actions">
+      <button onclick="loadDiag()">진단 새로고침</button>
+      <button onclick="act('redis-sample')">redis 샘플(2초)</button>
+      <button onclick="act('notebook-b-logs?tail=60')">노트북B 로그</button>
+      <button onclick="act('de-a-logs?tail=60')">DE_A 로그</button>
+      <button onclick="registryStatus()">registry 조회</button>
+      <button class="danger" onclick="act('firewall-allow')">방화벽 허용(5050/5002)</button>
+      <button class="danger" onclick="confirmAct('restart-de-a', 'DE_A를 재시작할까요?')">DE_A 재시작</button>
+      <button class="danger" onclick="confirmAct('release-all', '모든 groupId 연결을 해제할까요? (비상)')">비상: 전체 그룹 해제</button>
+    </div>
+    <pre id="out" class="muted">액션 결과가 여기 표시됩니다.</pre>
+
     <script>
       const ROWS = [
         ['redis', 'Redis(operator)'],
@@ -48,24 +127,21 @@
         ['data-engine-B', '데이터엔진 B(노트북B, Tailscale)'],
       ];
       function render(state) {
-        document.getElementById('list').innerHTML = ROWS.map(
-          ([key, label]) => {
-            const v = state[key];
-            const cls =
-              v === 'ok' || v === 'up' ? 'up' : v === undefined ? '' : 'down';
-            const txt =
-              v === undefined ? '미확인' : cls === 'up' ? '정상' : '다운';
-            return (
-              '<div class="row"><span class="dot ' +
-              cls +
-              '"></span>' +
-              label +
-              ': ' +
-              txt +
-              '</div>'
-            );
-          }
-        ).join('');
+        document.getElementById('list').innerHTML = ROWS.map(([key, label]) => {
+          const v = state[key];
+          const cls =
+            v === 'ok' || v === 'up' ? 'up' : v === undefined ? '' : 'down';
+          const txt = v === undefined ? '미확인' : cls === 'up' ? '정상' : '다운';
+          return (
+            '<div class="row"><span class="dot ' +
+            cls +
+            '"></span>' +
+            label +
+            ': ' +
+            txt +
+            '</div>'
+          );
+        }).join('');
         document.getElementById('ts').textContent =
           new Date().toLocaleTimeString('ko-KR');
       }
@@ -76,11 +152,76 @@
           const d = body.data || {};
           render({ redis: d.redis, ...(d.services || {}) });
         } catch {
-          render({}); // BE 자체가 다운이면 전부 미확인
+          render({});
         }
       }
       setInterval(refresh, 5000);
       refresh();
+
+      // ── groupId 일치확인 패널 ──
+      const short = (g) => (g ? '<code>' + g + '</code>' : '<span class="muted">없음</span>');
+      async function loadDiag() {
+        const el = document.getElementById('diag');
+        el.innerHTML = '<span class="muted">조회 중…</span>';
+        try {
+          const r = await fetch('/diag', { signal: AbortSignal.timeout(8000) });
+          const { data: d } = await r.json();
+          const m = d.match;
+          const badge = m.matched
+            ? '<span class="badge ok">일치 ✓</span>'
+            : '<span class="badge bad">불일치 ⚠️ (' + m.distinct.length + '개 groupId)</span>';
+          const pending = (d.pendingSubjects || [])
+            .map((p) => 'subject' + p.subjectIndex + ' <code>' + p.url + '</code>')
+            .join('<br/>') || '<span class="muted">없음</span>';
+          const groups = (d.registeredGroups || [])
+            .map((g) => short(g.groupId) + ' → subjects [' + g.subjects.join(',') + ']')
+            .join('<br/>') || '<span class="muted">없음</span>';
+          const stream = (v) =>
+            v === true ? '측정중' : v === false ? 'idle' : '<span class="muted">미확인</span>';
+          el.innerHTML =
+            badge +
+            '<table>' +
+            '<tr><th>대상</th><th>registered groupId</th><th>스트림</th></tr>' +
+            '<tr><td>DE_A(operator, subject1)</td><td>' + short(m.deA) + '</td><td>' + stream(d.dataEngineA.streaming) + '</td></tr>' +
+            '<tr><td>DE_B(노트북B, subject2)</td><td>' + short(m.deB) + '</td><td>' + stream(d.dataEngineB ? d.dataEngineB.streaming : null) + '</td></tr>' +
+            '<tr><td>BE active</td><td>' + short(m.beActive) + '</td><td>-</td></tr>' +
+            '</table>' +
+            '<div><b>pending 등록:</b><br/>' + pending + '</div>' +
+            '<div style="margin-top:.5rem"><b>바인딩된 그룹:</b><br/>' + groups + '</div>';
+          document.getElementById('diagTs').textContent =
+            new Date().toLocaleTimeString('ko-KR');
+        } catch (e) {
+          el.innerHTML = '<span class="badge bad">조회 실패</span> ' + e;
+        }
+      }
+
+      // ── 액션 실행 ──
+      const out = document.getElementById('out');
+      function showOut(obj) {
+        out.classList.remove('muted');
+        out.textContent = JSON.stringify(obj, null, 2);
+      }
+      async function act(name) {
+        out.classList.remove('muted');
+        out.textContent = name + ' 실행 중…';
+        try {
+          const r = await fetch('/diag/action/' + name, {
+            method: 'POST',
+            signal: AbortSignal.timeout(95000),
+          });
+          showOut(await r.json());
+          loadDiag();
+        } catch (e) {
+          showOut({ error: String(e) });
+        }
+      }
+      function confirmAct(name, msg) {
+        if (confirm(msg)) act(name);
+      }
+      function registryStatus() {
+        const gid = prompt('groupId 입력');
+        if (gid) act('registry-status?groupId=' + encodeURIComponent(gid));
+      }
     </script>
   </body>
 </html>

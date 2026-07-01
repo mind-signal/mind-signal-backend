@@ -160,6 +160,36 @@ export const engineRegistryService = {
     console.log(`DUAL_2PC 엔진 레지스트리 정리 완료: groupId=${groupId}`);
   },
 
+  /**
+   * 현재 dualRegistry에 등록된 모든 groupId + subjectIndex 스냅샷 반환함 (진단 대시보드용).
+   *
+   * @returns groupId별 등록된 subjectIndex 배열
+   */
+  getRegisteredGroups(): Array<{ groupId: string; subjects: number[] }> {
+    const result: Array<{ groupId: string; subjects: number[] }> = [];
+    for (const [gid, group] of dualRegistry.entries()) {
+      result.push({ groupId: gid, subjects: [...group.keys()].sort() });
+    }
+    return result;
+  },
+
+  /**
+   * 모든 DUAL_2PC 등록/pending/콜백 전부 제거함 — 비상 전체해제(대시보드)에서 호출됨.
+   *
+   * @returns 제거된 groupId 개수 + pending 개수
+   */
+  clearAll(): { clearedGroups: number; clearedPending: number } {
+    const clearedGroups = dualRegistry.size;
+    const clearedPending = pendingRegistry.size;
+    dualRegistry.clear();
+    registeredCallbacks.clear();
+    pendingRegistry.clear();
+    console.log(
+      `DUAL_2PC 레지스트리 전체 클리어 완료: groups=${clearedGroups}, pending=${clearedPending}`
+    );
+    return { clearedGroups, clearedPending };
+  },
+
   // ===== Phase 17.6 — pending registry 메서드 (LD-10, LD-16, LD-26) =====
 
   /**
