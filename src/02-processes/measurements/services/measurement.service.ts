@@ -228,18 +228,23 @@ function startDualMeasurement(groupId: string): void {
       // 실패 지점(waitForBothEngines) 바로 앞에서 collectPendingSubjects + triggerAssignGroup
       // 재사용(수동 dual-trigger와 동일 경로, DE already_registered 멱등). 실패해도 아래
       // waitForBothEngines timeout이 최종 가드. pending 2개 아니면 skip(DE 준비 미완).
-      try {
-        const subjects =
-          await dualTriggerService.collectPendingSubjects(groupId);
-        if (subjects.length === 2) {
-          await dualTriggerService.triggerAssignGroup(groupId, subjects);
+      // superseded 가드: collectPendingSubjects는 groupId로 필터 안 하고 caller groupId를
+      // attach하므로, 대기 중 다른 그룹에 선점되면 잘못된 그룹에 assign-group 오발행 위험.
+      // await 전후로 activeDualGroup === groupId 재확인함 (CodeRabbit).
+      if (activeDualGroup === groupId) {
+        try {
+          const subjects =
+            await dualTriggerService.collectPendingSubjects(groupId);
+          if (subjects.length === 2 && activeDualGroup === groupId) {
+            await dualTriggerService.triggerAssignGroup(groupId, subjects);
+          }
+        } catch (e) {
+          console.warn(
+            `[측정시작-보정] dual-trigger 보정 실패(무시, wait로 폴백): ${
+              e instanceof Error ? e.message : e
+            }`
+          );
         }
-      } catch (e) {
-        console.warn(
-          `[측정시작-보정] dual-trigger 보정 실패(무시, wait로 폴백): ${
-            e instanceof Error ? e.message : e
-          }`
-        );
       }
 
       // 두 DE 등록 대기 (최대 60초) — 클라이언트에게는 이미 응답 반환됨
