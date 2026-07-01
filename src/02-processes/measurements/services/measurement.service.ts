@@ -3,6 +3,7 @@ import { redisService } from '@07-shared/lib/redis';
 import { SocketService } from '@07-shared/lib/socket';
 import { AppError } from '@07-shared/errors';
 import { engineRegistryService } from '@02-processes/engine/services/engine-registry.service';
+import { dualTriggerService } from '@02-processes/engine/services/dual-2pc-trigger.service';
 import { timestampAlignerRegistry } from './timestamp-aligner.service';
 import { stimulusBroadcasterService } from './stimulus-broadcaster.service';
 import type { WavePower } from './timestamp-aligner.service';
@@ -221,6 +222,25 @@ function startDualMeasurement(groupId: string): void {
     try {
       // 새 측정 시작 전 stale 그룹 aligner/구독 정리 — 단일 활성 보장 (F1)
       await teardownStaleGroups(groupId);
+
+      // 측정 시작 직전 registry gap 자동복구 (D, codex gpt-5.5 권장) — 자동 페어링
+      // 트리거가 subject 2(원격 Tailscale DE)를 놓친 경우를 여기서 1회 보정함. 폴링 없이
+      // 실패 지점(waitForBothEngines) 바로 앞에서 collectPendingSubjects + triggerAssignGroup
+      // 재사용(수동 dual-trigger와 동일 경로, DE already_registered 멱등). 실패해도 아래
+      // waitForBothEngines timeout이 최종 가드. pending 2개 아니면 skip(DE 준비 미완).
+      try {
+        const subjects =
+          await dualTriggerService.collectPendingSubjects(groupId);
+        if (subjects.length === 2) {
+          await dualTriggerService.triggerAssignGroup(groupId, subjects);
+        }
+      } catch (e) {
+        console.warn(
+          `[측정시작-보정] dual-trigger 보정 실패(무시, wait로 폴백): ${
+            e instanceof Error ? e.message : e
+          }`
+        );
+      }
 
       // 두 DE 등록 대기 (최대 60초) — 클라이언트에게는 이미 응답 반환됨
       await waitForBothEngines(groupId, config.dualPc.registrationTimeoutMs);

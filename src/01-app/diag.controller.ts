@@ -144,6 +144,7 @@ export const diagStatus: RequestHandler = async (req, res) => {
       dataEngineB: deB,
       pendingSubjects,
       registeredGroups,
+      registryEvents: engineRegistryService.getRegistryEvents(),
       match: {
         matched,
         state,

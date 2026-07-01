@@ -12,6 +12,13 @@ const dualRegistry = new Map<string, Map<number, EngineRegistration>>();
 /** groupId → 등록 콜백 Set */
 const registeredCallbacks = new Map<string, Set<() => void>>();
 
+// dualRegistry 등록/evict 추적 이벤트 링버퍼 — 진단 대시보드용 (subject 누락 원인 추적)
+const registryEvents: string[] = [];
+function pushEvent(msg: string): void {
+  registryEvents.push(msg);
+  if (registryEvents.length > 60) registryEvents.shift();
+}
+
 /** 단일 DE 등록 정보 */
 interface EngineRegistration {
   url: string;
@@ -76,6 +83,9 @@ export const engineRegistryService = {
     };
 
     dualRegistry.get(groupId)!.set(subjectIndex, registration);
+    pushEvent(
+      `registerDual gid=${groupId.slice(-6)} sub=${subjectIndex} url=${engineUrl}`
+    );
     console.log(
       `DUAL_2PC 엔진 등록 완료: groupId=${groupId}, subjectIndex=${subjectIndex}, url=${engineUrl}`
     );
@@ -173,6 +183,11 @@ export const engineRegistryService = {
     return result;
   },
 
+  /** dualRegistry 등록/evict 추적 이벤트 반환함 — subject 누락 원인 진단용 */
+  getRegistryEvents(): string[] {
+    return [...registryEvents];
+  },
+
   /**
    * 모든 DUAL_2PC 등록/pending/콜백 전부 제거함 — 비상 전체해제(대시보드)에서 호출됨.
    *
@@ -213,6 +228,10 @@ export const engineRegistryService = {
     for (const [gid, group] of dualRegistry.entries()) {
       const existing = group.get(subjectIndex);
       if (existing && existing.url !== url) {
+        pushEvent(
+          `F4-EVICT gid=${gid.slice(-6)} sub=${subjectIndex} ` +
+            `stored=${existing.url} incoming=${url}`
+        );
         group.delete(subjectIndex);
         if (group.size === 0) {
           // cleanupGroup과 동일하게 콜백도 정리 — 재사용 groupId의 죽은 콜백 호출 방지함
