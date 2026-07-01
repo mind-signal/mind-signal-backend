@@ -54,6 +54,9 @@
       .badge.bad {
         background: #c62828;
       }
+      .badge.idle {
+        background: #777;
+      }
       table {
         border-collapse: collapse;
         margin: 0.5rem 0;
@@ -181,11 +184,14 @@
           const r = await fetch('/diag', { signal: AbortSignal.timeout(8000) });
           const { data: d } = await r.json();
           const m = d.match;
-          const badge = m.matched
-            ? '<span class="badge ok">일치 ✓</span>'
-            : '<span class="badge bad">불일치 ⚠️ (' + m.distinct.length + '개 groupId)</span>';
+          const badge =
+            m.state === 'matched'
+              ? '<span class="badge ok">일치 ✓</span>'
+              : m.state === 'idle'
+                ? '<span class="badge idle">대기(idle)</span>'
+                : '<span class="badge bad">불일치 ⚠️ (' + m.distinct.length + '개 groupId)</span>';
           const pending = (d.pendingSubjects || [])
-            .map((p) => 'subject' + p.subjectIndex + ' <code>' + esc(p.url) + '</code>')
+            .map((p) => 'subject' + esc(p.subjectIndex) + ' <code>' + esc(p.url) + '</code>')
             .join('<br/>') || '<span class="muted">없음</span>';
           const groups = (d.registeredGroups || [])
             .map((g) => short(g.groupId) + ' → subjects [' + g.subjects.join(',') + ']')

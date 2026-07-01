@@ -6,7 +6,10 @@ import { config } from '@07-shared/config/config';
 import { redisService } from '@07-shared/lib/redis';
 import { engineRegistryService } from '@02-processes/engine/services/engine-registry.service';
 import { dualTriggerService } from '@02-processes/engine/services/dual-2pc-trigger.service';
-import { getActiveDualGroup } from '@02-processes/measurements/services/measurement.service';
+import {
+  getActiveDualGroup,
+  resetActiveDualGroup,
+} from '@02-processes/measurements/services/measurement.service';
 
 const execAsync = promisify(exec);
 
@@ -16,10 +19,9 @@ const SECRET = config.dataEngine.secretKey;
 
 // 진단/수정 API는 localhost(loopback)에서만 허용함 — 원격 노출 차단 (dev 전용 도구)
 function isLoopback(req: Request): boolean {
+  // 빈 IP는 fail-open 방지를 위해 허용하지 않음 (명시적 loopback 주소만 통과)
   const ip = req.ip || req.socket.remoteAddress || '';
-  return (
-    ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || ip === ''
-  );
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 }
 
 // CSRF 방어 — 전역 cors() 하에서 악성 사이트가 브라우저로 localhost 액션을 호출하는 것 차단함.
@@ -120,12 +122,19 @@ export const diagStatus: RequestHandler = async (req, res) => {
   const pendingSubjects = engineRegistryService.getPendingSubjects();
   const registeredGroups = engineRegistryService.getRegisteredGroups();
 
-  // groupId 일치 판정 — DE_A / DE_B / BE active 세 값이 모두 같고 non-null 이면 matched
-  const gids = [deA.registeredGroupId, deB?.registeredGroupId, beActive].filter(
-    (g): g is string => Boolean(g)
-  );
-  const distinct = [...new Set(gids)];
-  const matched = distinct.length <= 1;
+  // groupId 일치 판정 — 해당 참가자(deA, deB(URL 설정 시), BE active)가
+  // 모두 non-null 이고 같은 groupId 일 때만 matched. 누락 참가자는 미일치로 처리(fail-open 방지).
+  const applicable = [
+    deA.registeredGroupId,
+    ...(DE_B_URL ? [deB?.registeredGroupId ?? null] : []),
+    beActive,
+  ];
+  const nonNull = applicable.filter((g): g is string => Boolean(g));
+  const distinct = [...new Set(nonNull)];
+  const allIdle = nonNull.length === 0;
+  const matched =
+    !allIdle && nonNull.length === applicable.length && distinct.length === 1;
+  const state = allIdle ? 'idle' : matched ? 'matched' : 'mismatch';
 
   return res.status(200).json({
     status: 'success',
@@ -137,6 +146,7 @@ export const diagStatus: RequestHandler = async (req, res) => {
       registeredGroups,
       match: {
         matched,
+        state,
         distinct,
         deA: deA.registeredGroupId,
         deB: deB?.registeredGroupId ?? null,
@@ -154,6 +164,8 @@ async function actionReleaseAll(): Promise<unknown> {
     ...(DE_B_URL ? [releaseDe(DE_B_URL)] : []),
   ]);
   const cleared = engineRegistryService.clearAll();
+  // BE 활성 그룹도 초기화 — release-all 후 stale activeDualGroup 방지
+  resetActiveDualGroup();
   return { deResults, cleared };
 }
 
