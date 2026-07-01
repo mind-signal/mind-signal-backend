@@ -11,6 +11,7 @@ import { SocketService } from '@07-shared/lib/socket';
 import { AuthProviderRegistry } from '@05-features/auth/services/providers/auth-provider.registry';
 import { registerPairingTriggerListener } from '@01-app/startup-listeners';
 import { healthCheck } from '@01-app/health.controller';
+import { diagStatus, diagAction } from '@01-app/diag.controller';
 import { registerStatic } from '@01-app/static';
 
 const app = express();
@@ -25,6 +26,9 @@ registerStatic(app);
 // 운영 정보(redis 상태, 내부 서비스 가용성) 노출 방지를 위해 비-production에서만 등록함.
 if (!config.isProduction) {
   app.get('/health', healthCheck);
+  // 진단 대시보드 API (groupId 일치확인 + 수정 액션) — localhost 전용, dev 전용
+  app.get('/diag', diagStatus);
+  app.post('/diag/action/:name', diagAction);
 }
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
