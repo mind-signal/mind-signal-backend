@@ -5,6 +5,17 @@ import { redisService } from '@07-shared/lib/redis';
 import { ProxySampleSchema } from './proxy-envelope.schema';
 
 /**
+ * 운영자 전용 room 이름 생성함.
+ * 피실험자가 합류하는 `{groupId}` room과 분리해 경보 전송 경계를 만듦.
+ *
+ * @param groupId - 실험 그룹 식별자임
+ * @returns 운영자 room 이름 반환
+ */
+export function operatorRoom(groupId: string): string {
+  return `${groupId}:operator`;
+}
+
+/**
  * Socket.io 서버 관리 유틸리티
  */
 export class SocketService {
@@ -43,6 +54,26 @@ export class SocketService {
           socket.join(groupId);
           console.log(`Socket ${socket.id} joined room ${groupId}`);
           ack?.({ ok: true, groupId });
+        }
+      );
+
+      // 운영자 전용 room join. 스트림 건강 경보는 이 room으로만 emit함.
+      // 피실험자 소켓은 합류하지 않으므로 경보가 도달하지 않음 —
+      // 측정 대상 신호에 stress 지표가 포함되어(streamer.py MET 6종),
+      // 경고로 유발된 불안이 종속변수를 직접 오염시키기 때문임.
+      socket.on(
+        'join-operator-room',
+        (
+          groupId: string,
+          ack?: (response: { ok: boolean; error?: string }) => void
+        ) => {
+          if (typeof groupId !== 'string' || groupId.length === 0) {
+            ack?.({ ok: false, error: 'invalid groupId' });
+            return;
+          }
+          socket.join(operatorRoom(groupId));
+          console.log(`Socket ${socket.id} joined operator room ${groupId}`);
+          ack?.({ ok: true });
         }
       );
 
@@ -116,16 +147,22 @@ export class SocketService {
             group_id: groupId,
             subject_idx: subjectIndex,
             payload,
+            metrics,
           } = parsed.data;
           const channel = `mind-signal:${groupId}:subject:${subjectIndex}`;
           try {
             // redisService.client는 publish 전용 - 모든 subscribe는 duplicate() 경유라
             // 이 공유 client는 PubSub 모드에 진입하지 않음 (measurement.service.ts 정합).
             // dedup 미수행이라 duplicate 필드 미emit - be-forwarder는 ok:true로 dequeue함.
-            // 소비자가 요구하는 형태({type, waves})로 감싸 publish함
+            // 소비자가 요구하는 형태({type, waves, metrics})로 감싸 publish함.
+            // metrics는 구버전 DE 프레임에서 없을 수 있어 있을 때만 실음.
             await redisService.client.publish(
               channel,
-              JSON.stringify({ type: 'brain_sync_all', waves: payload })
+              JSON.stringify({
+                type: 'brain_sync_all',
+                waves: payload,
+                ...(metrics ? { metrics } : {}),
+              })
             );
             ack?.({ ok: true });
           } catch (err) {
@@ -177,6 +214,25 @@ export class SocketService {
   ): void {
     if (this.io) {
       this.io.to(groupId).emit(event, data);
+    }
+  }
+
+  /**
+   * 운영자 전용 room에만 이벤트 브로드캐스트함.
+   * 피실험자 소켓은 이 room에 없으므로 페이로드가 전달되지 않음
+   * (렌더 차단이 아니라 전송 차단임).
+   *
+   * @param {string} groupId - 대상 그룹 식별자
+   * @param {string} event - 이벤트 명
+   * @param {unknown} data - 전송할 데이터 객체
+   */
+  public static emitToOperators(
+    groupId: string,
+    event: string,
+    data: unknown
+  ): void {
+    if (this.io) {
+      this.io.to(operatorRoom(groupId)).emit(event, data);
     }
   }
 }

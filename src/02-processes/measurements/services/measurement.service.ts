@@ -6,7 +6,8 @@ import { engineRegistryService } from '@02-processes/engine/services/engine-regi
 import { dualTriggerService } from '@02-processes/engine/services/dual-2pc-trigger.service';
 import { timestampAlignerRegistry } from './timestamp-aligner.service';
 import { stimulusBroadcasterService } from './stimulus-broadcaster.service';
-import type { WavePower } from './timestamp-aligner.service';
+import type { SubjectSample } from './timestamp-aligner.service';
+import { StreamHealthTracker } from './stream-health.service';
 import { RedisClientType } from 'redis';
 import { config } from '@07-shared/config/config';
 
@@ -36,6 +37,9 @@ const groupSubscribers = new Map<string, RedisClientType[]>();
 /** DUAL_2PC groupId별 flush setInterval 핸들러 — unsubscribeGroupChannels에서 clearInterval */
 const groupFlushIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
+/** DUAL_2PC groupId별 스트림 건강 추적기 — unsubscribeGroupChannels에서 제거 */
+const groupHealthTrackers = new Map<string, StreamHealthTracker>();
+
 /** 진행 중인 DUAL_2PC 측정 groupId — 중복 트리거 차단 */
 const dualMeasurementInFlight = new Set<string>();
 
@@ -63,6 +67,8 @@ export const resetActiveDualGroup = (): void => {
  */
 async function subscribeWithAligner(groupId: string): Promise<void> {
   const subscribers: RedisClientType[] = [];
+  const healthTracker = new StreamHealthTracker(groupId);
+  groupHealthTrackers.set(groupId, healthTracker);
 
   // v7 H-PREP-1: subjectIndex는 1-based
   // 기존 Redis 채널 규칙(`mind-signal:{groupId}:subject:{subjectIndex}`) 그대로 유지
@@ -73,12 +79,27 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
     await subscriber.subscribe(channel, (message: string) => {
       try {
         const parsed = JSON.parse(message);
-        // v8 C-1: streamer.py가 brain_sync_all 외에 headset_status 타입도 동일 채널에 publish
-        // (watchdog L172-183, on_headset_disconnected L193-204). parsed.waves 필드 없음 → aligner에 undefined 주입 방지
-        if (parsed.type !== 'brain_sync_all') return;
-        // waves 필드 → WavePower 추출 (core/streamer.py L266-277 payload 구조 기준)
-        const sample: WavePower = parsed.waves;
         const serverTimestamp = Date.now();
+
+        // streamer.py watchdog이 같은 채널로 보내는 headset_status를 운영자에게 중계함.
+        // aligner에는 주입하지 않음 (waves 필드가 없어 정렬 오염됨).
+        if (parsed.type === 'headset_status') {
+          healthTracker.recordHeadsetStatus(
+            subjectIndex,
+            parsed.status,
+            serverTimestamp
+          );
+          return;
+        }
+        if (parsed.type !== 'brain_sync_all') return;
+
+        // waves(대역 파워)와 metrics(EMOTIV 지표 6종)를 함께 실음.
+        // metrics는 구버전 DE 프레임에서 없을 수 있어 optional임.
+        const sample: SubjectSample = {
+          waves: parsed.waves,
+          ...(parsed.metrics ? { metrics: parsed.metrics } : {}),
+        };
+        healthTracker.recordSample(subjectIndex, serverTimestamp);
         timestampAlignerRegistry.ingest(
           groupId,
           subjectIndex,
@@ -97,6 +118,8 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
   // unsubscribeGroupChannels에서 clearInterval 처리
   const intervalId = setInterval(() => {
     timestampAlignerRegistry.flush(groupId);
+    // DE 프로세스가 죽으면 watchdog 스레드도 함께 사라지므로 BE가 독립 감지함
+    healthTracker.checkStale(Date.now());
   }, 100);
   // process 종료 시 flush 타이머가 Jest/Node를 block하지 않도록 unref 적용함
   intervalId.unref();
@@ -128,6 +151,7 @@ async function unsubscribeGroupChannels(groupId: string): Promise<void> {
     }
   }
   groupSubscribers.delete(groupId);
+  groupHealthTrackers.delete(groupId);
 }
 
 /**

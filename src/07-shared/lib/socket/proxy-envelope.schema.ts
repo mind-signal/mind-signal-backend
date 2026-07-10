@@ -16,6 +16,19 @@ const WavePowerSchema = z.object({
   gamma: z.number(),
 });
 
+/**
+ * EMOTIV 지표 6종. metrics를 싣지 않던 구버전 DE 프레임과 호환하려고 optional임.
+ * 누락 시 FE 차트가 대역 파워를 지표 자리에 표시하던 결함이 재발함 (2026-07-10 수정).
+ */
+const EmotivMetricsSchema = z.object({
+  focus: z.number(),
+  engagement: z.number(),
+  interest: z.number(),
+  excitement: z.number(),
+  stress: z.number(),
+  relaxation: z.number(),
+});
+
 export const ProxySampleSchema = z.object({
   group_id: z.string().min(1),
   // subject_idx는 1-based 계약이며 Group 최대 2 Subject라 1..2만 유효함
@@ -23,6 +36,7 @@ export const ProxySampleSchema = z.object({
   // 채널로 publish되어 ack는 ok인데 silent drop되므로 의도적 fail-closed로 invalid_frame 거부함.
   subject_idx: z.number().int().min(1).max(2),
   payload: WavePowerSchema,
+  metrics: EmotivMetricsSchema.optional(),
 });
 
 export type ProxySample = z.infer<typeof ProxySampleSchema>;

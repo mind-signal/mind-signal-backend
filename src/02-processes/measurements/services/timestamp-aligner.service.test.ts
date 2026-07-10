@@ -9,7 +9,7 @@
  */
 
 import { timestampAlignerRegistry } from './timestamp-aligner.service';
-import type { WavePower } from './timestamp-aligner.service';
+import type { SubjectSample, WavePower } from './timestamp-aligner.service';
 
 // SocketService 모킹 — 실제 소켓 서버 없이 호출 검증
 jest.mock('@07-shared/lib/socket', () => ({
@@ -23,12 +23,25 @@ import { SocketService } from '@07-shared/lib/socket';
 const mockEmitToGroup = SocketService.emitToGroup as jest.Mock;
 
 /** 테스트용 샘플 EEG WavePower */
-const makeSample = (base = 1.0): WavePower => ({
+const makeWaves = (base = 1.0): WavePower => ({
   delta: base,
   theta: base + 0.1,
   alpha: base + 0.2,
   beta: base + 0.3,
   gamma: base + 0.4,
+});
+
+/** aligned_pair 계약: 각 subject는 waves와 metrics를 함께 실음 (2026-07-10) */
+const makeSample = (base = 1.0): SubjectSample => ({
+  waves: makeWaves(base),
+  metrics: {
+    focus: 0.1,
+    engagement: 0.2,
+    interest: 0.3,
+    excitement: 0.4,
+    stress: 0.5,
+    relaxation: 0.6,
+  },
 });
 
 describe('timestampAlignerRegistry — BE-aligner', () => {
