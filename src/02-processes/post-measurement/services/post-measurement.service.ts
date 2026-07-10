@@ -7,6 +7,20 @@ import { engineProxyService } from '@02-processes/engine/services/engine-proxy.s
 import { config } from '@07-shared/config/config';
 
 /**
+ * 동조율(-1..1)을 매칭 점수(0..100)로 변환함.
+ *
+ * 음수 동조율은 역상관(두 피실험자가 반대로 반응)이므로 0으로 클램프함.
+ * 클램프 없이 저장하면 AnalysisResult/MatchingPool 스키마의 min:0 검증에 걸려
+ * ValidationError가 발생하고 결과가 통째로 유실됨(2026-07-10 라이브 실측).
+ * 원본 부호는 synchronyScore 필드에 그대로 보존됨.
+ *
+ * @param synchronyScore - 엔진이 계산한 동조율, null이면 미측정임
+ * @returns 0 이상 100 이하 정수 매칭 점수 반환
+ */
+export const toMatchingScore = (synchronyScore: number | null): number =>
+  synchronyScore !== null ? Math.max(0, Math.round(synchronyScore * 100)) : 0;
+
+/**
  * 포스트-측정 오케스트레이션 파이프라인 수행함
  * 트리거: 두 subject 모두 COMPLETED 감지 시
  */
@@ -82,8 +96,7 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
     synchronyScore = (pipelineResult.synchronyScore as number) ?? null;
     yScore = (pipelineResult.yScore as number) ?? null;
     markdown = (pipelineResult.markdown as string) ?? '';
-    matchingScore =
-      synchronyScore !== null ? Math.round(synchronyScore * 100) : 0;
+    matchingScore = toMatchingScore(synchronyScore);
   } catch (err) {
     console.error(`[postMeasurement] 엔진 파이프라인 분석 실패:`, err);
     // 엔진 실패 시 PENDING 상태로 생성하여 재시도 가능하도록 함
