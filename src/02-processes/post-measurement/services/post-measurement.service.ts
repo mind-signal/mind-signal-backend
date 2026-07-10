@@ -17,8 +17,12 @@ import { config } from '@07-shared/config/config';
  * @param synchronyScore - 엔진이 계산한 동조율, null이면 미측정임
  * @returns 0 이상 100 이하 정수 매칭 점수 반환
  */
-export const toMatchingScore = (synchronyScore: number | null): number =>
-  synchronyScore !== null ? Math.max(0, Math.round(synchronyScore * 100)) : 0;
+export const toMatchingScore = (synchronyScore: number | null): number => {
+  if (synchronyScore === null) return 0;
+  // 스키마 계약이 0..100이므로 양끝 모두 클램프함. Pearson 상관은 이론상 1을
+  // 넘지 않으나 부동소수 오차나 향후 지표 교체로 상한을 넘으면 동일하게 유실됨.
+  return Math.min(100, Math.max(0, Math.round(synchronyScore * 100)));
+};
 
 /**
  * 포스트-측정 오케스트레이션 파이프라인 수행함

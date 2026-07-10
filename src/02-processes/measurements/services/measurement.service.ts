@@ -1,6 +1,6 @@
 import { Session } from '@06-entities/sessions';
 import { redisService } from '@07-shared/lib/redis';
-import { SocketService } from '@07-shared/lib/socket';
+import { BrainSyncAllSchema, SocketService } from '@07-shared/lib/socket';
 import { AppError } from '@07-shared/errors';
 import { engineRegistryService } from '@02-processes/engine/services/engine-registry.service';
 import { dualTriggerService } from '@02-processes/engine/services/dual-2pc-trigger.service';
@@ -93,11 +93,20 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
         }
         if (parsed.type !== 'brain_sync_all') return;
 
+        // waves 누락·형식 파손 프레임이 aligner로 흘러가지 않게 검증함.
+        const frame = BrainSyncAllSchema.safeParse(parsed);
+        if (!frame.success) {
+          console.warn(
+            `DUAL_2PC ${channel} invalid brain_sync_all frame — drop`
+          );
+          return;
+        }
+
         // waves(대역 파워)와 metrics(EMOTIV 지표 6종)를 함께 실음.
         // metrics는 구버전 DE 프레임에서 없을 수 있어 optional임.
         const sample: SubjectSample = {
-          waves: parsed.waves,
-          ...(parsed.metrics ? { metrics: parsed.metrics } : {}),
+          waves: frame.data.waves,
+          ...(frame.data.metrics ? { metrics: frame.data.metrics } : {}),
         };
         healthTracker.recordSample(subjectIndex, serverTimestamp);
         timestampAlignerRegistry.ingest(

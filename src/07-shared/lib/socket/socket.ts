@@ -1,4 +1,5 @@
 import { Server as HttpServer } from 'http';
+import jwt from 'jsonwebtoken';
 import { Server, Socket } from 'socket.io';
 import { config } from '@07-shared/config/config';
 import { redisService } from '@07-shared/lib/redis';
@@ -61,16 +62,35 @@ export class SocketService {
       // 피실험자 소켓은 합류하지 않으므로 경보가 도달하지 않음 —
       // 측정 대상 신호에 stress 지표가 포함되어(streamer.py MET 6종),
       // 경고로 유발된 불안이 종속변수를 직접 오염시키기 때문임.
+      //
+      // JWT를 요구함. 무인증이면 피실험자 브라우저가 이벤트명만 알아도
+      // 합류해 경보를 관측할 수 있어 위 격리가 무의미해짐 (CodeRabbit PR #74).
       socket.on(
         'join-operator-room',
         (
-          groupId: string,
+          payload: { groupId?: string; token?: string } | string,
           ack?: (response: { ok: boolean; error?: string }) => void
         ) => {
+          const groupId =
+            typeof payload === 'string' ? payload : payload?.groupId;
+          const token =
+            typeof payload === 'string' ? undefined : payload?.token;
+
           if (typeof groupId !== 'string' || groupId.length === 0) {
             ack?.({ ok: false, error: 'invalid groupId' });
             return;
           }
+          if (!token) {
+            ack?.({ ok: false, error: 'unauthorized' });
+            return;
+          }
+          try {
+            jwt.verify(token, config.jwtSecret.secret);
+          } catch {
+            ack?.({ ok: false, error: 'unauthorized' });
+            return;
+          }
+
           socket.join(operatorRoom(groupId));
           console.log(`Socket ${socket.id} joined operator room ${groupId}`);
           ack?.({ ok: true });
