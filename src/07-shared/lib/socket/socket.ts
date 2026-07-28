@@ -2,6 +2,7 @@ import { Server as HttpServer } from 'http';
 import jwt from 'jsonwebtoken';
 import { Server, Socket } from 'socket.io';
 import { config } from '@07-shared/config/config';
+import { OPERATOR_SOCKET_TOKEN_TYPE } from '@07-shared/constants/operator-socket-token';
 import { redisService } from '@07-shared/lib/redis';
 import { ProxySampleSchema } from './proxy-envelope.schema';
 
@@ -85,7 +86,15 @@ export class SocketService {
             return;
           }
           try {
-            jwt.verify(token, config.jwtSecret.secret);
+            const verifiedPayload = jwt.verify(token, config.jwtSecret.secret);
+            if (
+              typeof verifiedPayload === 'string' ||
+              verifiedPayload.type !== OPERATOR_SOCKET_TOKEN_TYPE ||
+              verifiedPayload.groupId !== groupId
+            ) {
+              ack?.({ ok: false, error: 'unauthorized' });
+              return;
+            }
           } catch {
             ack?.({ ok: false, error: 'unauthorized' });
             return;

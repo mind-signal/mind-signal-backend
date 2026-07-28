@@ -1,7 +1,12 @@
-import jwt, { JwtPayload } from 'jsonwebtoken';
+import jwt from 'jsonwebtoken';
+import type { JwtPayload } from 'jsonwebtoken';
 import { Session } from '@06-entities/sessions';
 import { AppError } from '@07-shared/errors';
 import { config } from '@07-shared/config/config';
+import {
+  OPERATOR_SOCKET_TOKEN_TTL_SECONDS,
+  OPERATOR_SOCKET_TOKEN_TYPE,
+} from '@07-shared/constants/operator-socket-token';
 
 // ===== operator join 완료 listener registry =====
 
@@ -20,11 +25,11 @@ export function addOperatorJoinListener(cb: OperatorJoinCallback): void {
 /**
  * [Service] operator join 프로세스 수행함.
  *
- * invite JWT 토큰을 검증하여 groupId와 experimentMode를 반환함.
+ * invite JWT 토큰을 검증하여 groupId, experimentMode와 소켓 토큰을 반환함.
  * QR 직접 스캔 flow를 지원하므로 authenticate 미들웨어 없이 호출 가능함.
  *
  * @param token - createOperatorInviteToken이 발급한 JWT
- * @returns { groupId, experimentMode: 'DUAL_2PC' }
+ * @returns groupId, experimentMode와 운영자 소켓 인증 정보 반환
  * @throws AppError 401 — 토큰 서명 오류 또는 만료
  * @throws AppError 400 — 잘못된 토큰 타입
  * @throws AppError 404 — 해당 groupId 세션 없음
@@ -32,6 +37,8 @@ export function addOperatorJoinListener(cb: OperatorJoinCallback): void {
 export async function joinAsOperator(token: string): Promise<{
   groupId: string;
   experimentMode: 'DUAL_2PC';
+  socketToken: string;
+  socketTokenExpiresAt: number;
 }> {
   let payload: JwtPayload;
   try {
@@ -57,6 +64,19 @@ export async function joinAsOperator(token: string): Promise<{
     throw new AppError('세션을 찾을 수 없습니다.', 404);
   }
 
+  const issuedAtSeconds = Math.floor(Date.now() / 1000);
+  const socketTokenExpiresAt =
+    (issuedAtSeconds + OPERATOR_SOCKET_TOKEN_TTL_SECONDS) * 1000;
+  const socketToken = jwt.sign(
+    {
+      groupId,
+      type: OPERATOR_SOCKET_TOKEN_TYPE,
+      iat: issuedAtSeconds,
+    },
+    config.jwtSecret.secret,
+    { expiresIn: OPERATOR_SOCKET_TOKEN_TTL_SECONDS }
+  );
+
   // operator join 완료 listener 호출 (LD-12 대안 D)
   // fire-and-forget — listener 내부 retry/timeout이 응답 블로킹 방지함
   for (const cb of operatorJoinListeners) {
@@ -65,5 +85,10 @@ export async function joinAsOperator(token: string): Promise<{
     });
   }
 
-  return { groupId, experimentMode: 'DUAL_2PC' };
+  return {
+    groupId,
+    experimentMode: 'DUAL_2PC',
+    socketToken,
+    socketTokenExpiresAt,
+  };
 }
