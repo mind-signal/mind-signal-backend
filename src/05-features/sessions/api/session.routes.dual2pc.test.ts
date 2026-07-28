@@ -5,14 +5,21 @@
  *   - POST /:groupId/invite-operator — 유효 groupId → 201 + token/expiresAt
  *   - POST /:groupId/invite-operator — 세션 없음 → 404
  *   - POST /:groupId/invite-operator — 인증 없음 → 401
- *   - POST /join-as-operator — 유효 JWT → 200 + groupId + experimentMode
+ *   - POST /join-as-operator — 유효 JWT → 소켓 인증 정보 포함 200
  *   - POST /join-as-operator — 만료 JWT → 401
  *   - POST /join-as-operator — 잘못된 서명 → 401
  */
 
 import express from 'express';
+import http from 'http';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { io as ioClient } from 'socket.io-client';
+import type { Socket as ClientSocket } from 'socket.io-client';
+import {
+  OPERATOR_SOCKET_TOKEN_TTL_SECONDS,
+  OPERATOR_SOCKET_TOKEN_TYPE,
+} from '@07-shared/constants/operator-socket-token';
 
 // Session 모킹 — MongoDB 의존 제거함
 jest.mock('@06-entities/sessions', () => ({
@@ -31,6 +38,15 @@ jest.mock('@07-shared/config/config', () => ({
       timestampToleranceMs: 200,
       registrationTimeoutMs: 60000,
     },
+  },
+}));
+
+jest.mock('@07-shared/lib/redis', () => ({
+  redisService: {
+    client: {
+      publish: jest.fn(),
+    },
+    connect: jest.fn(() => Promise.resolve()),
   },
 }));
 
@@ -57,6 +73,7 @@ jest.mock('@07-shared/middlewares', () => {
 });
 
 import { Session } from '@06-entities/sessions';
+import { SocketService } from '@07-shared/lib/socket';
 import sessionRouter from './session.routes';
 
 const mockSession = Session as jest.Mocked<typeof Session>;
@@ -145,11 +162,81 @@ describe('POST /api/sessions/:groupId/invite-operator (BE-1-invite)', () => {
 });
 
 describe('POST /api/sessions/join-as-operator (BE-1-join)', () => {
+  let socketHttpServer: http.Server;
+  let socketServerUrl: string;
+
+  beforeAll(async () => {
+    socketHttpServer = http.createServer();
+    SocketService.init(socketHttpServer);
+
+    await new Promise<void>((resolve) => {
+      socketHttpServer.listen(0, '127.0.0.1', resolve);
+    });
+
+    const address = socketHttpServer.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('테스트 소켓 서버 주소를 확인할 수 없습니다.');
+    }
+    socketServerUrl = `http://127.0.0.1:${address.port}`;
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it('유효 JWT → 200 + groupId + experimentMode DUAL_2PC 반환함', async () => {
+  afterAll(async () => {
+    await new Promise<void>((resolve) => {
+      SocketService.getIO().close(() => resolve());
+    });
+
+    if (socketHttpServer.listening) {
+      await new Promise<void>((resolve, reject) => {
+        socketHttpServer.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    }
+  });
+
+  function joinOperatorRoom(
+    groupId: string,
+    token: string
+  ): Promise<{ ok: boolean; error?: string }> {
+    return new Promise((resolve, reject) => {
+      const client: ClientSocket = ioClient(socketServerUrl, {
+        transports: ['websocket'],
+        forceNew: true,
+        reconnection: false,
+      });
+
+      client.once('connect_error', (error: Error) => {
+        client.disconnect();
+        reject(error);
+      });
+      client.once('connect', () => {
+        client
+          .timeout(2_000)
+          .emit(
+            'join-operator-room',
+            { groupId, token },
+            (error: Error | null, ack: { ok: boolean; error?: string }) => {
+              client.disconnect();
+              if (error) {
+                reject(error);
+                return;
+              }
+              resolve(ack);
+            }
+          );
+      });
+    });
+  }
+
+  it('유효 JWT → 소켓 인증 정보를 포함하고 실제 room 합류에 성공함', async () => {
     // Arrange
     const token = makeInviteToken('grp-001');
     (mockSession.find as jest.Mock).mockResolvedValue([{ groupId: 'grp-001' }]);
@@ -164,6 +251,22 @@ describe('POST /api/sessions/join-as-operator (BE-1-join)', () => {
     expect(res.body.status).toBe('success');
     expect(res.body.data.groupId).toBe('grp-001');
     expect(res.body.data.experimentMode).toBe('DUAL_2PC');
+    expect(typeof res.body.data.socketToken).toBe('string');
+    expect(typeof res.body.data.socketTokenExpiresAt).toBe('number');
+
+    const socketToken = res.body.data.socketToken;
+    const decoded = jwt.verify(socketToken, 'test-secret-key');
+    if (typeof decoded === 'string' || !decoded.exp || !decoded.iat) {
+      throw new Error('소켓 토큰 claim을 확인할 수 없습니다.');
+    }
+    expect(decoded.groupId).toBe('grp-001');
+    expect(decoded.type).toBe(OPERATOR_SOCKET_TOKEN_TYPE);
+    expect(res.body.data.socketTokenExpiresAt).toBe(decoded.exp * 1000);
+    expect(decoded.exp - decoded.iat).toBe(OPERATOR_SOCKET_TOKEN_TTL_SECONDS);
+
+    await expect(joinOperatorRoom('grp-001', socketToken)).resolves.toEqual({
+      ok: true,
+    });
   });
 
   it('만료 토큰 → 401 반환함', async () => {

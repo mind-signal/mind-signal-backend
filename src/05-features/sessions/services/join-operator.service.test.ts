@@ -2,7 +2,7 @@
  * join-operator.service.ts — Unit 테스트
  *
  * 검증 항목:
- *   - 유효 JWT → { groupId, experimentMode: 'DUAL_2PC' } 반환함
+ *   - 유효 JWT → groupId, experimentMode, socketToken 반환함
  *   - 만료 토큰 → AppError 401 발생함
  *   - 잘못된 서명 → AppError 401 발생함
  *   - 잘못된 type 클레임 → AppError 400 발생함
@@ -10,6 +10,10 @@
  */
 
 import jwt from 'jsonwebtoken';
+import {
+  OPERATOR_SOCKET_TOKEN_TTL_SECONDS,
+  OPERATOR_SOCKET_TOKEN_TYPE,
+} from '@07-shared/constants/operator-socket-token';
 import { joinAsOperator } from './join-operator.service';
 
 // Session 모델 모킹 — MongoDB 의존 제거함
@@ -44,7 +48,7 @@ describe('joinAsOperator — join-operator.service', () => {
     jest.clearAllMocks();
   });
 
-  it('유효 JWT 시 { groupId, experimentMode: DUAL_2PC } 반환함', async () => {
+  it('유효 JWT 시 소켓 인증 정보를 포함해 반환함', async () => {
     // Arrange
     const token = makeValidToken('group-abc');
     (mockSession.find as jest.Mock).mockResolvedValue([
@@ -57,6 +61,16 @@ describe('joinAsOperator — join-operator.service', () => {
     // Assert
     expect(result.groupId).toBe('group-abc');
     expect(result.experimentMode).toBe('DUAL_2PC');
+    expect(typeof result.socketToken).toBe('string');
+
+    const decoded = jwt.verify(result.socketToken, 'test-secret-key');
+    if (typeof decoded === 'string' || !decoded.exp || !decoded.iat) {
+      throw new Error('소켓 토큰 claim을 확인할 수 없습니다.');
+    }
+    expect(decoded.groupId).toBe('group-abc');
+    expect(decoded.type).toBe(OPERATOR_SOCKET_TOKEN_TYPE);
+    expect(result.socketTokenExpiresAt).toBe(decoded.exp * 1000);
+    expect(decoded.exp - decoded.iat).toBe(OPERATOR_SOCKET_TOKEN_TTL_SECONDS);
   });
 
   it('만료 토큰 → AppError 401 발생함', async () => {
