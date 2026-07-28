@@ -42,6 +42,11 @@ describe('SocketService join-operator-room 인증', () => {
   let httpServer: http.Server;
   let serverUrl: string;
 
+  // 테스트 간 redisService mock 호출 이력 격리함
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   beforeAll(async () => {
     httpServer = http.createServer();
     SocketService.init(httpServer);
