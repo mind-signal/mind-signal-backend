@@ -5,8 +5,9 @@ import { dualTriggerService } from '../services/dual-2pc-trigger.service';
 import { stopMeasurementService } from '@02-processes/measurements/services/measurement.service';
 import { saveUploadedCsv } from '../services/csv-upload.service';
 import {
-  countCsvRows,
+  MIN_COVERAGE_RATIO,
   evaluateSubjectCoverage,
+  readCsvStats,
 } from '../services/session-coverage.service';
 import { AppError } from '@07-shared/errors';
 import { SocketService } from '@07-shared/lib/socket';
@@ -51,15 +52,33 @@ async function triggerPostMeasurementByTier(groupId: string) {
   // 프로세스 생존 시간뿐 아니라 실제 수집량(coverage)까지 확인함.
   // 스트림이 중간에 죽어도 프로세스가 살아 있으면 duration만으로는 통과하기 때문임.
   const validSessions = completedSessions.filter((s) => {
-    const rows = countCsvRows(groupId, s.subjectIndex as number);
+    const stats = readCsvStats(groupId, s.subjectIndex as number);
     const verdict = evaluateSubjectCoverage(
-      rows,
+      stats,
       s.measuredDurationSeconds,
       MIN_ANALYSIS_SECONDS
     );
-    if (!verdict.valid) {
+    // 판정 여부와 무관하게 세 지표를 남김. 밀도는 게이트, 완주율은 관측용,
+    // legacy는 옛 판정식 값이라 회차 간 비교가 끊기지 않게 함
+    const metrics =
+      `rows=${stats.rows} span=${stats.spanSeconds.toFixed(1)}s ` +
+      `density=${(verdict.density * 100).toFixed(1)}% ` +
+      `completion=${(verdict.completionRatio * 100).toFixed(1)}% ` +
+      `legacy=${(verdict.legacyCoverage * 100).toFixed(1)}%`;
+    if (verdict.valid) {
+      console.log(
+        `[postMeasurement] groupId=${groupId} subject=${s.subjectIndex} 유효: ${metrics}`
+      );
+      // 완주율이 낮으면 데이터는 쓰되 스트림 이상을 경고로 남김
+      if (verdict.completionRatio < MIN_COVERAGE_RATIO) {
+        console.warn(
+          `[postMeasurement] groupId=${groupId} subject=${s.subjectIndex} ` +
+            `완주율 낮음 — 스트림 조기 종료나 전달 지연 의심: ${metrics}`
+        );
+      }
+    } else {
       console.warn(
-        `[postMeasurement] groupId=${groupId} subject=${s.subjectIndex} 제외: ${verdict.reason} (rows=${rows}, coverage=${(verdict.coverage * 100).toFixed(1)}%)`
+        `[postMeasurement] groupId=${groupId} subject=${s.subjectIndex} 제외: ${verdict.reason} (${metrics})`
       );
     }
     return verdict.valid;
