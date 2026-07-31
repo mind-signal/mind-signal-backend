@@ -74,8 +74,20 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
   };
   if (consent2?._id) record2Doc.consentId = consent2._id;
 
-  const record1 = await EegRecord.create(record1Doc);
-  const record2 = await EegRecord.create(record2Doc);
+  // create가 아니라 sessionId 기준 upsert임. 엔진 실패 후 재시도가 들어오면
+  // create는 같은 세션의 EegRecord를 매번 새로 쌓음(제약이 없어 조용히 누적됨)
+  const [record1, record2] = await Promise.all([
+    EegRecord.findOneAndUpdate(
+      { sessionId: session1._id },
+      { $set: record1Doc },
+      { upsert: true, new: true }
+    ),
+    EegRecord.findOneAndUpdate(
+      { sessionId: session2._id },
+      { $set: record2Doc },
+      { upsert: true, new: true }
+    ),
+  ]);
 
   // 2. 엔진 파이프라인 분석 호출함
   let pipelineResult: Record<string, unknown> = {};
@@ -106,46 +118,61 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
     matchingScore = toMatchingScore(synchronyScore);
   } catch (err) {
     console.error(`[postMeasurement] groupId=${groupId} 엔진 분석 실패:`, err);
-    // 엔진 실패 시 PENDING 상태로 생성하여 재시도 가능하도록 함
-    await MatchingPool.create({
-      groupId,
-      user1Id,
-      user2Id,
-      matchingScore: 0,
-      status: 'PENDING',
-    });
+    // 엔진 실패 시 PENDING 상태로 남겨 재시도 가능하도록 함.
+    // create가 아니라 upsert인 이유: groupId에 unique 인덱스가 걸려 있어
+    // 두 번째 실패에서 create가 중복키로 터지고, 그러면 아래 throw에 도달하지
+    // 못해 보고되는 사유가 엔진 에러가 아니라 Mongo 에러가 됨
+    await MatchingPool.findOneAndUpdate(
+      { groupId },
+      { $set: { user1Id, user2Id, matchingScore: 0, status: 'PENDING' } },
+      { upsert: true }
+    );
     // 삼키지 않고 다시 던짐. 호출부가 실패를 소켓으로 알림. 이전에는 여기서
     // return해 프론트가 무한 폴링 후 "응답 시간 초과"만 보게 됐음
     throw err;
   }
 
-  // 3. AnalysisResult 1건 생성함 (그룹 단위)
-  const analysisResult = await AnalysisResult.create({
-    groupId,
-    user1Id,
-    user2Id,
-    record1Id: record1._id,
-    record2Id: record2._id,
-    surveySummary: '',
-    matchingScore,
-    synchronyScore,
-    yScore,
-    aiComment: markdown
-      ? '뇌파 분석이 완료되었습니다.'
-      : '분석 데이터가 부족합니다.',
-    markdown,
-    pipelineResult,
-  });
+  // 3. AnalysisResult 1건 생성함 (그룹 단위).
+  // groupId unique 인덱스가 있으므로 재시도 시 create는 중복키로 터짐
+  const analysisResult = await AnalysisResult.findOneAndUpdate(
+    { groupId },
+    {
+      $set: {
+        user1Id,
+        user2Id,
+        record1Id: record1._id,
+        record2Id: record2._id,
+        surveySummary: '',
+        matchingScore,
+        synchronyScore,
+        yScore,
+        aiComment: markdown
+          ? '뇌파 분석이 완료되었습니다.'
+          : '분석 데이터가 부족합니다.',
+        markdown,
+        pipelineResult,
+      },
+    },
+    { upsert: true, new: true }
+  );
 
-  // 4. MatchingPool 1건 생성함
-  await MatchingPool.create({
-    groupId,
-    user1Id,
-    user2Id,
-    analysisId: analysisResult._id,
-    matchingScore,
-    status: 'COMPLETED',
-  });
+  // 4. MatchingPool 1건 생성함.
+  // 실패 후 재시도 경로에서는 PENDING 문서가 이미 있으므로 create가 아니라
+  // upsert여야 함. create로 두면 분석이 실제로 성공했는데도 중복키 에러가
+  // 호출부로 전파돼 사용자에게 "분석 실패"로 보고됨
+  await MatchingPool.findOneAndUpdate(
+    { groupId },
+    {
+      $set: {
+        user1Id,
+        user2Id,
+        analysisId: analysisResult._id,
+        matchingScore,
+        status: 'COMPLETED',
+      },
+    },
+    { upsert: true }
+  );
 
   // 5. EegRecord eegSummary 업데이트함
   const subjects = pipelineResult.subjects as any[];

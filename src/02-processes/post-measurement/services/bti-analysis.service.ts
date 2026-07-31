@@ -51,7 +51,13 @@ export const runBTIAnalysisPipeline = async (
     eegSummary: {},
   };
   if (consent1?._id) record1Doc.consentId = consent1._id;
-  const record1 = await EegRecord.create(record1Doc);
+  // sessionId 기준 upsert임. 엔진 실패 후 재시도가 들어오면 create는 같은
+  // 세션의 EegRecord를 매번 새로 쌓음(제약이 없어 조용히 누적됨)
+  const record1 = await EegRecord.findOneAndUpdate(
+    { sessionId: targetSession._id },
+    { $set: record1Doc },
+    { upsert: true, new: true }
+  );
 
   // 엔진 세션 분석 호출함 (/api/analyze — metricsMean/wavesMean 포함)
   let sessionResult: Record<string, unknown> = {};
