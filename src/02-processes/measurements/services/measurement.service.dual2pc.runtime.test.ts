@@ -47,7 +47,6 @@ jest.mock('@02-processes/engine/services/engine-proxy.service', () => ({
     streamStartDual: jest.fn().mockResolvedValue({ status: 'started' }),
     streamStart: jest.fn().mockResolvedValue({ status: 'started' }),
     analyzePipeline: jest.fn(),
-    analyzeDual2pcPipeline: jest.fn(),
   },
 }));
 
@@ -118,6 +117,7 @@ jest.mock(
 jest.mock('@06-entities/sessions', () => ({
   Session: {
     findById: jest.fn(),
+    find: jest.fn(),
     updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
   },
 }));
@@ -126,7 +126,10 @@ jest.mock('@06-entities/sessions', () => ({
 // imports (mock 선언 후)
 // ---------------------------------------------------------------------------
 import { engineRegistryService } from '@02-processes/engine/services/engine-registry.service';
-import { startMeasurementService } from './measurement.service';
+import {
+  startMeasurementService,
+  startDualMeasurementByGroup,
+} from './measurement.service';
 import { SocketService } from '@07-shared/lib/socket';
 import { Session } from '@06-entities/sessions';
 
@@ -233,5 +236,329 @@ describe('startDualMeasurement 런타임 streamStart 호출 검증', () => {
         error: expect.stringContaining('DE 2'),
       })
     );
+  });
+});
+
+// ===========================================================================
+// 회귀 재현 — DUAL_2PC 측정 라이프사이클 fix (감사 fix_needed #1, #2)
+// ===========================================================================
+
+describe('DUAL_2PC 측정 라이프사이클 회귀 재현', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    engineRegistryService.cleanupGroup(GROUP_ID);
+    (Session.updateMany as jest.Mock).mockResolvedValue({ modifiedCount: 2 });
+  });
+
+  // fix #1: startDualMeasurement 성공 시 세션 MEASURING 전이 누락 회귀
+  // fix 전: 성공 경로에 updateMany(MEASURING) 없음 → 세션 PAIRED 잔류 →
+  //         이후 stop이 PAIRED→COMPLETED 불가로 실패. 본 테스트는 fix 전 RED.
+  it('streamStartDual 성공 후 세션을 MEASURING으로 전이함', async () => {
+    (Session.findById as jest.Mock).mockResolvedValue(
+      makeDualSession(GROUP_ID)
+    );
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      2,
+      'http://de2:5002',
+      ENGINE_SECRET
+    );
+
+    await startMeasurementService('session-id-001');
+    await new Promise<void>((r) => setTimeout(r, 200));
+
+    // 성공 경로에서 MEASURING 전이가 DB에 반영되어야 함
+    expect(Session.updateMany).toHaveBeenCalledWith(
+      { groupId: GROUP_ID },
+      expect.objectContaining({ status: 'MEASURING' })
+    );
+  });
+
+  // fix #2: startDualMeasurementByGroup canTransitionTo 가드 부재 회귀
+  // fix 전: experimentMode만 보고 상태 전이 가드 없음 → 측정 불가 상태에서도
+  //         start 진행. 본 테스트는 fix 전 RED(throw 기대인데 resolve됨).
+  it('전이 불가 상태에서 startDualMeasurementByGroup이 400 throw함', async () => {
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      2,
+      'http://de2:5002',
+      ENGINE_SECRET
+    );
+    (Session.find as jest.Mock).mockResolvedValue([
+      {
+        groupId: GROUP_ID,
+        experimentMode: 'DUAL_2PC',
+        status: 'MEASURING',
+        canTransitionTo: jest.fn().mockReturnValue(false),
+      },
+    ]);
+
+    await expect(startDualMeasurementByGroup(GROUP_ID)).rejects.toThrow(
+      /측정을 시작할 수 없습니다/
+    );
+  });
+});
+
+// ===========================================================================
+// 전체 세션 검증 — sessions.every() 가드 (RC-2 고쳐진 사항)
+// ===========================================================================
+
+describe('startDualMeasurementByGroup 전체 세션 검증', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    engineRegistryService.cleanupGroup(GROUP_ID);
+  });
+
+  it('두 세션 중 하나가 transition 불가면 400 throw함', async () => {
+    // Session.find가 두 세션 반환, 두 번째가 canTransitionTo=false
+    (Session.find as jest.Mock).mockResolvedValue([
+      {
+        groupId: GROUP_ID,
+        experimentMode: 'DUAL_2PC',
+        status: 'PAIRED',
+        canTransitionTo: jest.fn().mockReturnValue(true),
+      },
+      {
+        groupId: GROUP_ID,
+        experimentMode: 'DUAL_2PC',
+        status: 'MEASURING',
+        canTransitionTo: jest.fn().mockReturnValue(false),
+      },
+    ]);
+
+    await expect(startDualMeasurementByGroup(GROUP_ID)).rejects.toThrow(
+      /측정을 시작할 수 없습니다/
+    );
+  });
+
+  it('두 세션 중 하나가 비-DUAL_2PC면 400 throw함', async () => {
+    // Session.find가 두 세션 반환, 두 번째가 experimentMode != DUAL_2PC
+    (Session.find as jest.Mock).mockResolvedValue([
+      {
+        groupId: GROUP_ID,
+        experimentMode: 'DUAL_2PC',
+        status: 'PAIRED',
+        canTransitionTo: jest.fn().mockReturnValue(true),
+      },
+      {
+        groupId: GROUP_ID,
+        experimentMode: 'SEQUENTIAL',
+        status: 'PAIRED',
+        canTransitionTo: jest.fn().mockReturnValue(true),
+      },
+    ]);
+
+    await expect(startDualMeasurementByGroup(GROUP_ID)).rejects.toThrow(
+      /DUAL_2PC 모드만 지원합니다/
+    );
+  });
+});
+
+// ===========================================================================
+// 중복 트리거 차단 — dualMeasurementInFlight 가드 (RC-3 고쳐진 사항)
+// ===========================================================================
+
+// ===========================================================================
+// F1 회귀 재현 — 새 그룹 시작 시 stale 그룹 aligner teardown
+// (차트 0건 근본원인: 이전 run의 aligner가 allCompleted stop 없이 잔존하여
+//  옛 room으로 계속 aligned_pair emit. 새 그룹 시작 시 타 그룹 정리되어야 함.)
+// ===========================================================================
+
+describe('F1 — 새 그룹 시작 시 stale 그룹 aligner teardown', () => {
+  const OLD = 'grp_f1_old';
+  const NEW = 'grp_f1_new';
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    engineRegistryService.cleanupGroup(OLD);
+    engineRegistryService.cleanupGroup(NEW);
+    (Session.updateMany as jest.Mock).mockResolvedValue({ modifiedCount: 2 });
+  });
+
+  it('OLD 그룹 측정 중 NEW 그룹 시작 시 OLD aligner를 cleanup하고 NEW는 보존함', async () => {
+    const { timestampAlignerRegistry } = jest.requireMock(
+      '@02-processes/measurements/services/timestamp-aligner.service'
+    );
+
+    // OLD 측정 시작 — subscribeWithAligner(OLD)까지 진행되어 활성 그룹 등록됨
+    (Session.find as jest.Mock).mockResolvedValue([
+      makeDualSession(OLD),
+      makeDualSession(OLD),
+    ]);
+    engineRegistryService.registerDual(
+      OLD,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      OLD,
+      2,
+      'http://de2:5002',
+      ENGINE_SECRET
+    );
+    await startDualMeasurementByGroup(OLD);
+    await new Promise<void>((r) => setTimeout(r, 200));
+
+    timestampAlignerRegistry.cleanup.mockClear();
+
+    // NEW 측정 시작 — 타 그룹(OLD) teardown 발동 기대
+    (Session.find as jest.Mock).mockResolvedValue([
+      makeDualSession(NEW),
+      makeDualSession(NEW),
+    ]);
+    engineRegistryService.registerDual(
+      NEW,
+      1,
+      'http://de3:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      NEW,
+      2,
+      'http://de4:5002',
+      ENGINE_SECRET
+    );
+    await startDualMeasurementByGroup(NEW);
+    await new Promise<void>((r) => setTimeout(r, 200));
+
+    // OLD aligner는 정리, NEW(현재 그룹)는 정리 대상 아님
+    expect(timestampAlignerRegistry.cleanup).toHaveBeenCalledWith(OLD);
+    expect(timestampAlignerRegistry.cleanup).not.toHaveBeenCalledWith(NEW);
+  });
+});
+
+// ===========================================================================
+// F1b 회귀 재현 — startup in-flight 그룹 supersede (CodeRabbit #68)
+// teardownStaleGroups는 구독 완료 그룹만 보므로, OLD가 아직 waitForBothEngines
+// 단계면 정리 대상에서 빠짐. NEW 시작 후 OLD가 뒤늦게 resolve되면 두 번째 aligner를
+// 붙여 "단일 활성" 보장이 깨짐. supersede 가드로 차단되어야 함.
+// ===========================================================================
+
+describe('F1b — startup in-flight 그룹 supersede', () => {
+  const OLD = 'grp_f1b_old';
+  const NEW = 'grp_f1b_new';
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    engineRegistryService.cleanupGroup(OLD);
+    engineRegistryService.cleanupGroup(NEW);
+    (Session.updateMany as jest.Mock).mockResolvedValue({ modifiedCount: 2 });
+  });
+
+  it('OLD가 DE 대기 중일 때 NEW 시작 시 OLD는 superseded되어 aligner 미생성', async () => {
+    const { timestampAlignerRegistry } = jest.requireMock(
+      '@02-processes/measurements/services/timestamp-aligner.service'
+    );
+
+    // OLD: DE 미등록 → waitForBothEngines에서 대기 상태로 진입
+    (Session.find as jest.Mock).mockResolvedValue([
+      makeDualSession(OLD),
+      makeDualSession(OLD),
+    ]);
+    await startDualMeasurementByGroup(OLD);
+
+    // NEW: DE 등록 → 정상 완료 (activeDualGroup=NEW)
+    engineRegistryService.registerDual(
+      NEW,
+      1,
+      'http://de3:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      NEW,
+      2,
+      'http://de4:5002',
+      ENGINE_SECRET
+    );
+    (Session.find as jest.Mock).mockResolvedValue([
+      makeDualSession(NEW),
+      makeDualSession(NEW),
+    ]);
+    await startDualMeasurementByGroup(NEW);
+    await new Promise<void>((r) => setTimeout(r, 150));
+
+    // 뒤늦게 OLD DE 등록 → OLD waitForBothEngines resolve → supersede 가드 진입
+    engineRegistryService.registerDual(
+      OLD,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      OLD,
+      2,
+      'http://de2:5002',
+      ENGINE_SECRET
+    );
+    await new Promise<void>((r) => setTimeout(r, 300));
+
+    // NEW만 aligner 생성, OLD는 supersede되어 미생성
+    expect(timestampAlignerRegistry.getOrCreate).toHaveBeenCalledWith(
+      NEW,
+      expect.anything()
+    );
+    expect(timestampAlignerRegistry.getOrCreate).not.toHaveBeenCalledWith(
+      OLD,
+      expect.anything()
+    );
+    // superseded OLD 세션은 terminal cleanup(CANCELLED)으로 정리됨 (CodeRabbit #70)
+    expect(Session.updateMany).toHaveBeenCalledWith(
+      { groupId: OLD },
+      expect.objectContaining({ status: 'CANCELLED' })
+    );
+  });
+});
+
+describe('startDualMeasurement 중복 트리거 차단 (in-flight 가드)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    engineRegistryService.cleanupGroup(GROUP_ID);
+    // 두 DE 사전 등록 — waitForBothEngines 즉시 resolve 유도
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      2,
+      'http://de2:5002',
+      ENGINE_SECRET
+    );
+    (Session.find as jest.Mock).mockResolvedValue([
+      makeDualSession(GROUP_ID),
+      makeDualSession(GROUP_ID),
+    ]);
+    (Session.updateMany as jest.Mock).mockResolvedValue({ modifiedCount: 2 });
+  });
+
+  it('같은 groupId로 연속 2회 호출 시 streamStartDual은 정확히 2회만 호출됨', async () => {
+    // Act — 두 호출을 await 없이 동시에 시작해 in-flight 가드 작동 검증
+    const p1 = startDualMeasurementByGroup(GROUP_ID);
+    const p2 = startDualMeasurementByGroup(GROUP_ID);
+    await Promise.all([p1, p2]);
+
+    // fire-and-forget IIFE 완료 대기
+    await new Promise<void>((r) => setTimeout(r, 300));
+
+    // Assert — streamStartDual은 subject 1, 2 각 1회씩 총 2회만 호출됨
+    const { engineProxyService } = jest.requireMock(
+      '@02-processes/engine/services/engine-proxy.service'
+    );
+    expect(engineProxyService.streamStartDual).toHaveBeenCalledTimes(2);
   });
 });

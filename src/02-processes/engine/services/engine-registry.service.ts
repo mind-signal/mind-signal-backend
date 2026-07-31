@@ -12,18 +12,23 @@ const dualRegistry = new Map<string, Map<number, EngineRegistration>>();
 /** groupId → 등록 콜백 Set */
 const registeredCallbacks = new Map<string, Set<() => void>>();
 
+// dualRegistry 등록/evict 추적 이벤트 링버퍼 — 진단 대시보드용 (subject 누락 원인 추적)
+const registryEvents: string[] = [];
+function pushEvent(msg: string): void {
+  registryEvents.push(msg);
+  if (registryEvents.length > 60) registryEvents.shift();
+}
+
 /** 단일 DE 등록 정보 */
 interface EngineRegistration {
   url: string;
   subjectIndex: number;
-  registeredAt: number;
 }
 
 // ===== Phase 17.6 — pending registry (LD-10) =====
 /** subjectIndex → pending entry (groupId 미정 상태) */
 interface PendingEntry {
   url: string;
-  registeredAt: number;
 }
 
 const pendingRegistry = new Map<1 | 2, PendingEntry>();
@@ -46,11 +51,6 @@ export const engineRegistryService = {
       throw new AppError('파이썬 데이터 엔진이 아직 등록되지 않았습니다.', 503);
     }
     return registeredEngineUrl;
-  },
-
-  /** 등록 상태 확인함 */
-  isRegistered(): boolean {
-    return registeredEngineUrl !== null;
   },
 
   // ===== 신규 메서드 — DUAL_2PC 전용 =====
@@ -80,10 +80,12 @@ export const engineRegistryService = {
     const registration: EngineRegistration = {
       url: engineUrl,
       subjectIndex,
-      registeredAt: Date.now(),
     };
 
     dualRegistry.get(groupId)!.set(subjectIndex, registration);
+    pushEvent(
+      `registerDual gid=${groupId.slice(-6)} sub=${subjectIndex} url=${engineUrl}`
+    );
     console.log(
       `DUAL_2PC 엔진 등록 완료: groupId=${groupId}, subjectIndex=${subjectIndex}, url=${engineUrl}`
     );
@@ -168,6 +170,41 @@ export const engineRegistryService = {
     console.log(`DUAL_2PC 엔진 레지스트리 정리 완료: groupId=${groupId}`);
   },
 
+  /**
+   * 현재 dualRegistry에 등록된 모든 groupId + subjectIndex 스냅샷 반환함 (진단 대시보드용).
+   *
+   * @returns groupId별 등록된 subjectIndex 배열
+   */
+  getRegisteredGroups(): Array<{ groupId: string; subjects: number[] }> {
+    const result: Array<{ groupId: string; subjects: number[] }> = [];
+    for (const [gid, group] of dualRegistry.entries()) {
+      result.push({ groupId: gid, subjects: [...group.keys()].sort() });
+    }
+    return result;
+  },
+
+  /** dualRegistry 등록/evict 추적 이벤트 반환함 — subject 누락 원인 진단용 */
+  getRegistryEvents(): string[] {
+    return [...registryEvents];
+  },
+
+  /**
+   * 모든 DUAL_2PC 등록/pending/콜백 전부 제거함 — 비상 전체해제(대시보드)에서 호출됨.
+   *
+   * @returns 제거된 groupId 개수 + pending 개수
+   */
+  clearAll(): { clearedGroups: number; clearedPending: number } {
+    const clearedGroups = dualRegistry.size;
+    const clearedPending = pendingRegistry.size;
+    dualRegistry.clear();
+    registeredCallbacks.clear();
+    pendingRegistry.clear();
+    console.log(
+      `DUAL_2PC 레지스트리 전체 클리어 완료: groups=${clearedGroups}, pending=${clearedPending}`
+    );
+    return { clearedGroups, clearedPending };
+  },
+
   // ===== Phase 17.6 — pending registry 메서드 (LD-10, LD-16, LD-26) =====
 
   /**
@@ -183,7 +220,27 @@ export const engineRegistryService = {
     if (secretKey !== config.dataEngine.secretKey) {
       throw new AppError('유효하지 않은 시크릿 키입니다.', 403);
     }
-    pendingRegistry.set(subjectIndex, { url, registeredAt: Date.now() });
+    pendingRegistry.set(subjectIndex, { url });
+
+    // F4: DE 재시작(다른 url) 시 동일 subjectIndex의 옛 그룹 dualRegistry 배정 제거함.
+    // 옛 배정 잔류가 그룹ID 표류를 유발함. proxy 모드 주기 재등록(동일 url)은
+    // 라이브 배정을 보존하기 위해 url이 다를 때만 evict함 (D2 정합).
+    for (const [gid, group] of dualRegistry.entries()) {
+      const existing = group.get(subjectIndex);
+      if (existing && existing.url !== url) {
+        pushEvent(
+          `F4-EVICT gid=${gid.slice(-6)} sub=${subjectIndex} ` +
+            `stored=${existing.url} incoming=${url}`
+        );
+        group.delete(subjectIndex);
+        if (group.size === 0) {
+          // cleanupGroup과 동일하게 콜백도 정리 — 재사용 groupId의 죽은 콜백 호출 방지함
+          registeredCallbacks.delete(gid);
+          dualRegistry.delete(gid);
+        }
+      }
+    }
+
     console.log(`pending 등록 완료: subjectIndex=${subjectIndex}, url=${url}`);
   },
 

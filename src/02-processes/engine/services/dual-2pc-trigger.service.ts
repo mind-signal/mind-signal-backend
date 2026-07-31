@@ -24,21 +24,20 @@ export interface RegistryStatus {
     | 'both_failed'
     | 'invalid_secret'
     | 'not_pending_mode'
-    | 'group_id_conflict'
-    | 'precondition_unmet';
+    | 'group_id_conflict';
   startedAt?: number;
   finishedAt?: number;
 }
 
-/** DE pending 정보 — groupId + url + subjectIndex 묶음 */
-export interface DePendingInfo {
+/** DE pending 정보 — groupId + url + subjectIndex 묶음 (모듈 내부 전용) */
+interface DePendingInfo {
   groupId: string;
   url: string;
   subjectIndex: 1 | 2;
 }
 
-/** dualTriggerService 공개 API */
-export interface DualTriggerService {
+/** dualTriggerService API 형태 — 모듈 내부 타입 가드 전용 (외부 import 없음) */
+interface DualTriggerService {
   /**
    * 양쪽 DE에 /control/assign-group POST 호출함.
    * Promise.allSettled + 3회 retry exponential backoff 적용함.

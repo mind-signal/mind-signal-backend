@@ -2,6 +2,7 @@ import { Session } from '@06-entities/sessions';
 import { Types } from 'mongoose';
 import mongoose from 'mongoose';
 import { AppError } from '@07-shared/errors';
+import { ExperimentMode } from '@07-shared/constants/experiment';
 import crypto from 'crypto';
 
 // ===== 페어링 완료 listener registry =====
@@ -22,26 +23,21 @@ export function addPairingCompleteListener(cb: PairingCallback): void {
 }
 
 /**
- * 페어링 완료 콜백 등록 해제함.
- *
- * @param cb - 제거할 콜백 함수
- */
-export function removePairingCompleteListener(cb: PairingCallback): void {
-  pairingListeners.delete(cb);
-}
-
-/**
  * [Service] 운영자용 그룹 세션 생성 프로세스 정의함
  * $inc 원자적 연산으로 동시 요청 시에도 고유한 subjectIndex 보장함
  * @param groupId 기존 그룹에 추가할 경우 제공하며, 없을 경우 신규 생성함
+ * @param creatorId 세션 생성자(운영자) ID — 제공 시 바인딩함
+ * @param experimentMode 실험 모드 — 미제공 시 스키마 default(DUAL) 적용함
  */
 export const createGroupSessionProcess = async (
   groupId?: string,
-  creatorId?: string
+  creatorId?: string,
+  experimentMode?: ExperimentMode
 ) => {
-  // 1. 그룹 식별자 결정함 (제공되지 않으면 신규 생성 수행함)
-  const effectiveGroupId =
-    groupId || crypto.randomBytes(4).toString('hex').toUpperCase();
+  // 1. 그룹 식별자 결정함 (제공되지 않으면 24자리 ObjectId hex 신규 생성함)
+  // session.schema.ts:8-11의 24자리 HEX regex와 정합 보장. 8자리 단축 형식은
+  // FE 재전송 시 schema 거부되어 DUAL 2인 페어링 차단되는 회귀 박제됨
+  const effectiveGroupId = groupId || new Types.ObjectId().toHexString();
 
   // 2. 원자적 $inc 연산으로 고유 subjectIndex 획득함 (경쟁 조건 방지함)
   const counter = await mongoose.connection
@@ -69,6 +65,8 @@ export const createGroupSessionProcess = async (
     status: 'CREATED',
     expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5분 유효함
     ...(creatorId ? { creatorId: new Types.ObjectId(creatorId) } : {}),
+    // experimentMode 제공 시 명시 저장, 미제공 시 스키마 default(DUAL) 적용함
+    ...(experimentMode ? { experimentMode } : {}),
   });
 
   return await newSession.save();

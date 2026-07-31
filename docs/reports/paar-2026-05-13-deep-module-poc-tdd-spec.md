@@ -296,7 +296,7 @@ class FixedClock implements Clock {
 - D 기준 회귀 0 — src/** 수정 0 = 충족
 
 ### 6.2 산출물
-- `.plans/H-deep-module-poc/RESULT.md` (8~15줄)
+- `.plans/_archive/legacy/H-deep-module-poc/RESULT.md` (DOCS-W102) (8~15줄)
 - `STATE.md` Phase H 갱신 (또는 신규 생성 — 본 세션 STATE.md 미존재 확인됨)
 - 메모리: `project_phase_h_done.md` 또는 `_no_go.md`
 - 옵시디언 task amend (`/obsidian-record` 의무, [[feedback-use-obsidian-skill]] + [[feedback-obsidian-record-amend-too]])
@@ -327,7 +327,7 @@ class FixedClock implements Clock {
 | Step 4c PAAR (codex r2) | `paar-2026-05-13-deep-module-poc-codex-r2.md` |
 | mermaid source | `docs/architecture/deep-module-mermaid.mmd` |
 | mermaid SVG | `docs/architecture/deep-module-mermaid.svg` |
-| 본 PoC HANDOFF (rev.4) | `Team-project/.plans/H-deep-module-poc/HANDOFF.md` |
+| 본 PoC HANDOFF (rev.4) | `Team-project/.plans/_archive/legacy/H-deep-module-poc/HANDOFF.md` |
 | vendor 스킬 | `mind-signal-backend/.claude/skills/improve-codebase-architecture/{SKILL,LANGUAGE,DEEPENING,INTERFACE-DESIGN}.md` + `_local-addendum.md` |
 
 ---

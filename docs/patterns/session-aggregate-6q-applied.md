@@ -2,7 +2,7 @@
 
 > Companion: `docs/patterns/ddd-discovery-via-6q.md` (6 forcing questions 일반 가이드)
 > Companion: `.claude/skills/office-hours-ddd-discovery/SKILL.md`
-> Companion: `.plans/G-mind-signal-ddd-bdd-tdd/DOMAIN-MODEL-NOTES.md` (code-review-graph 실측 단일 근거)
+> Companion: `.plans/_archive/legacy/G-mind-signal-ddd-bdd-tdd/DOMAIN-MODEL-NOTES.md` (SESSION-W107) (code-review-graph 실측 단일 근거)
 > Purpose: `SessionAggregate` 도메인 모델링 결정을 6Q 형식으로 박제.
 > Scope: mind-signal-backend 단일 저장소. 페어링 흐름(`CREATED → PAIRED`) 한 줄.
 > Frame (P1): 학습/시연 + Phase F 자산 활성화 + 새 기여 주장 0건.
@@ -200,10 +200,10 @@ export type SessionPairedEvent = {
 
 | 항목 | 위치 |
 |---|---|
-| 코드 실측 단일 근거 | `.plans/G-mind-signal-ddd-bdd-tdd/DOMAIN-MODEL-NOTES.md` |
-| Aggregate 설계 결정 LOCK | `.plans/G-mind-signal-ddd-bdd-tdd/DISCUSS.md` rev.4 (Q1~Q6) |
-| 한국어 명명 가이드 | `.plans/G-mind-signal-ddd-bdd-tdd/NAMING-GUIDE.md` rev.2 |
-| 실행 계획 (Wave 0~3) | `.plans/G-mind-signal-ddd-bdd-tdd/PLAN.md` rev.3 |
+| 코드 실측 단일 근거 | `.plans/_archive/legacy/G-mind-signal-ddd-bdd-tdd/DOMAIN-MODEL-NOTES.md` |
+| Aggregate 설계 결정 LOCK | `.plans/_archive/legacy/G-mind-signal-ddd-bdd-tdd/DISCUSS.md` rev.4 (Q1~Q6) |
+| 한국어 명명 가이드 | `.plans/_archive/legacy/G-mind-signal-ddd-bdd-tdd/NAMING-GUIDE.md` rev.2 |
+| 실행 계획 (Wave 0~3) | `.plans/_archive/legacy/G-mind-signal-ddd-bdd-tdd/PLAN.md` rev.3 |
 | 6Q 일반 가이드 | `docs/patterns/ddd-discovery-via-6q.md` |
 | 6Q 스킬 (gstack v2.0.0 MIT) | `.claude/skills/office-hours-ddd-discovery/SKILL.md` |
 | Pocock TDD 스킬 (MIT) | `.claude/skills/tdd/SKILL.md` |

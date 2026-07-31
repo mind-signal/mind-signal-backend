@@ -10,11 +10,26 @@ import { config } from '@07-shared/config/config';
 import { SocketService } from '@07-shared/lib/socket';
 import { AuthProviderRegistry } from '@05-features/auth/services/providers/auth-provider.registry';
 import { registerPairingTriggerListener } from '@01-app/startup-listeners';
+import { healthCheck } from '@01-app/health.controller';
+import { diagStatus, diagAction } from '@01-app/diag.controller';
+import { registerStatic } from '@01-app/static';
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
+
+// 대시보드 정적 파일 서빙함 (public/dashboard.html)
+registerStatic(app);
+
+// 대시보드용 집계 헬스체크 (root 레벨, CORS 불필요).
+// 운영 정보(redis 상태, 내부 서비스 가용성) 노출 방지를 위해 비-production에서만 등록함.
+if (!config.isProduction) {
+  app.get('/health', healthCheck);
+  // 진단 대시보드 API (groupId 일치확인 + 수정 액션) — localhost 전용, dev 전용
+  app.get('/diag', diagStatus);
+  app.post('/diag/action/:name', diagAction);
+}
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
 app.use('/api', indexRouter);
@@ -50,6 +65,18 @@ async function connectDB() {
     if (!mongoURI) {
       throw new Error(
         'MongoDB URI가 설정되지 않았습니다. (.env / config.ts 확인)'
+      );
+    }
+
+    // ADR-011 MongoDB SRV DNS resolver fallback — env 활성화 시에만 적용함
+    // Node c-ares가 OS Wi-Fi 어댑터 DNS 변경을 후속 감지 안 함. mongoose는 mongodb+srv 파싱
+    // 시 내부에서 dns.promises.resolveSrv를 호출하여 c-ares 경로 사용. OS DNS 변경해도
+    // 미적용 함정 우회용 conditional override. production 환경 default off 유지함.
+    if (config.mongoSrvDnsServers && config.mongoSrvDnsServers.length > 0) {
+      const dns = await import('dns');
+      dns.setServers(config.mongoSrvDnsServers);
+      console.log(
+        `MongoDB SRV DNS resolver override 적용: ${config.mongoSrvDnsServers.join(', ')}`
       );
     }
 

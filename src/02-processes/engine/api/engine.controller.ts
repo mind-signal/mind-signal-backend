@@ -3,6 +3,11 @@ import { engineRegistryService } from '../services/engine-registry.service';
 import { engineProxyService } from '../services/engine-proxy.service';
 import { dualTriggerService } from '../services/dual-2pc-trigger.service';
 import { stopMeasurementService } from '@02-processes/measurements/services/measurement.service';
+import { saveUploadedCsv } from '../services/csv-upload.service';
+import {
+  countCsvRows,
+  evaluateSubjectCoverage,
+} from '../services/session-coverage.service';
 import { AppError } from '@07-shared/errors';
 import { SocketService } from '@07-shared/lib/socket';
 
@@ -43,11 +48,22 @@ async function triggerPostMeasurementByTier(groupId: string) {
     status: 'COMPLETED',
   });
 
-  const validSessions = completedSessions.filter(
-    (s) =>
-      s.measuredDurationSeconds !== null &&
-      s.measuredDurationSeconds >= MIN_ANALYSIS_SECONDS
-  );
+  // 프로세스 생존 시간뿐 아니라 실제 수집량(coverage)까지 확인함.
+  // 스트림이 중간에 죽어도 프로세스가 살아 있으면 duration만으로는 통과하기 때문임.
+  const validSessions = completedSessions.filter((s) => {
+    const rows = countCsvRows(groupId, s.subjectIndex as number);
+    const verdict = evaluateSubjectCoverage(
+      rows,
+      s.measuredDurationSeconds,
+      MIN_ANALYSIS_SECONDS
+    );
+    if (!verdict.valid) {
+      console.warn(
+        `[postMeasurement] groupId=${groupId} subject=${s.subjectIndex} 제외: ${verdict.reason} (rows=${rows}, coverage=${(verdict.coverage * 100).toFixed(1)}%)`
+      );
+    }
+    return verdict.valid;
+  });
 
   const tier =
     validSessions.length >= 2
@@ -117,6 +133,19 @@ export const engineController = {
         message: 'DUAL_2PC 엔진 등록 완료',
         registeredCount: group?.size ?? 0,
       });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /** 노트북 B DE가 업로드한 subject CSV를 operator csv 폴더에 저장함 (2-PC 집계) */
+  csvUpload: (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const secretKey = req.header('x-engine-secret') ?? '';
+      const filename = String(req.query.filename ?? '');
+      const content = typeof req.body === 'string' ? req.body : '';
+      saveUploadedCsv({ secretKey, filename, content });
+      res.status(200).json({ status: 'success', message: 'CSV 업로드 완료' });
     } catch (error) {
       next(error);
     }

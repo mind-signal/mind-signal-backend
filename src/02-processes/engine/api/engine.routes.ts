@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { engineController } from './engine.controller';
 import { authenticate } from '@07-shared/middlewares/authenticate.middleware';
 import { validate } from '@07-shared/middlewares/validate.middleware';
@@ -118,6 +118,14 @@ router.post(
   '/register-dual',
   validate(registerDualSchema),
   engineController.registerDual
+);
+
+// DUAL_2PC 2-PC 집계 — 노트북 B DE가 자기 subject CSV를 operator로 업로드함.
+// 인증: x-engine-secret 헤더(엔진 내부 통신). 본문: text/csv 원본, 메타: filename 쿼리.
+router.post(
+  '/csv-upload',
+  express.text({ type: ['text/csv', 'text/plain'], limit: '15mb' }),
+  engineController.csvUpload
 );
 
 // 전체 파이프라인 분석 프록시

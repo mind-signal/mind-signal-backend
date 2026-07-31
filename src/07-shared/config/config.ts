@@ -81,6 +81,13 @@ export const config = {
   kakaoRedirectUri: process.env.KAKAO_REDIRECT_URI,
   // K phase 강제 페어링 admin allowlist — lowercase normalize됨
   adminEmails,
+  // ADR-011 MongoDB SRV DNS resolver fallback — env 비어 있으면 OS 기본 경로 유지
+  // 값 있으면 mongoose.connect 직전에 dns.setServers 호출함 (Node c-ares OS DNS 미감지 우회용)
+  mongoSrvDnsServers: process.env.MONGODB_SRV_DNS_SERVERS
+    ? process.env.MONGODB_SRV_DNS_SERVERS.split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : undefined,
   // Phase 16 DUAL_2PC 타임스탬프 정렬 설정 (optional — 기본값 사용 가능)
   dualPc: {
     // plan-review M-4: 편도 50ms + NTP skew 50ms = 200ms 기본값

@@ -1,11 +1,13 @@
 import { Session } from '@06-entities/sessions';
 import { redisService } from '@07-shared/lib/redis';
-import { SocketService } from '@07-shared/lib/socket';
+import { BrainSyncAllSchema, SocketService } from '@07-shared/lib/socket';
 import { AppError } from '@07-shared/errors';
 import { engineRegistryService } from '@02-processes/engine/services/engine-registry.service';
+import { dualTriggerService } from '@02-processes/engine/services/dual-2pc-trigger.service';
 import { timestampAlignerRegistry } from './timestamp-aligner.service';
 import { stimulusBroadcasterService } from './stimulus-broadcaster.service';
-import type { WavePower } from './timestamp-aligner.service';
+import type { SubjectSample } from './timestamp-aligner.service';
+import { StreamHealthTracker } from './stream-health.service';
 import { RedisClientType } from 'redis';
 import { config } from '@07-shared/config/config';
 
@@ -35,6 +37,23 @@ const groupSubscribers = new Map<string, RedisClientType[]>();
 /** DUAL_2PC groupId별 flush setInterval 핸들러 — unsubscribeGroupChannels에서 clearInterval */
 const groupFlushIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
+/** DUAL_2PC groupId별 스트림 건강 추적기 — unsubscribeGroupChannels에서 제거 */
+const groupHealthTrackers = new Map<string, StreamHealthTracker>();
+
+/** 진행 중인 DUAL_2PC 측정 groupId — 중복 트리거 차단 */
+const dualMeasurementInFlight = new Set<string>();
+
+/** 가장 최근 시작된 DUAL_2PC 그룹 — startup in-flight supersede 판정용 (F1b) */
+let activeDualGroup: string | null = null;
+
+/** 현재 활성 DUAL_2PC 그룹 반환함 — 진단 대시보드 groupId 일치확인용 */
+export const getActiveDualGroup = (): string | null => activeDualGroup;
+
+/** 활성 DUAL_2PC 그룹 초기화함 — 비상 전체해제(release-all)에서 stale 방지용 */
+export const resetActiveDualGroup = (): void => {
+  activeDualGroup = null;
+};
+
 // ---------------------------------------------------------------------------
 // 내부 헬퍼 — DUAL_2PC 전용
 // ---------------------------------------------------------------------------
@@ -48,6 +67,8 @@ const groupFlushIntervals = new Map<string, ReturnType<typeof setInterval>>();
  */
 async function subscribeWithAligner(groupId: string): Promise<void> {
   const subscribers: RedisClientType[] = [];
+  const healthTracker = new StreamHealthTracker(groupId);
+  groupHealthTrackers.set(groupId, healthTracker);
 
   // v7 H-PREP-1: subjectIndex는 1-based
   // 기존 Redis 채널 규칙(`mind-signal:{groupId}:subject:{subjectIndex}`) 그대로 유지
@@ -58,12 +79,36 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
     await subscriber.subscribe(channel, (message: string) => {
       try {
         const parsed = JSON.parse(message);
-        // v8 C-1: streamer.py가 brain_sync_all 외에 headset_status 타입도 동일 채널에 publish
-        // (watchdog L172-183, on_headset_disconnected L193-204). parsed.waves 필드 없음 → aligner에 undefined 주입 방지
-        if (parsed.type !== 'brain_sync_all') return;
-        // waves 필드 → WavePower 추출 (core/streamer.py L266-277 payload 구조 기준)
-        const sample: WavePower = parsed.waves;
         const serverTimestamp = Date.now();
+
+        // streamer.py watchdog이 같은 채널로 보내는 headset_status를 운영자에게 중계함.
+        // aligner에는 주입하지 않음 (waves 필드가 없어 정렬 오염됨).
+        if (parsed.type === 'headset_status') {
+          healthTracker.recordHeadsetStatus(
+            subjectIndex,
+            parsed.status,
+            serverTimestamp
+          );
+          return;
+        }
+        if (parsed.type !== 'brain_sync_all') return;
+
+        // waves 누락·형식 파손 프레임이 aligner로 흘러가지 않게 검증함.
+        const frame = BrainSyncAllSchema.safeParse(parsed);
+        if (!frame.success) {
+          console.warn(
+            `DUAL_2PC ${channel} invalid brain_sync_all frame — drop`
+          );
+          return;
+        }
+
+        // waves(대역 파워)와 metrics(EMOTIV 지표 6종)를 함께 실음.
+        // metrics는 구버전 DE 프레임에서 없을 수 있어 optional임.
+        const sample: SubjectSample = {
+          waves: frame.data.waves,
+          ...(frame.data.metrics ? { metrics: frame.data.metrics } : {}),
+        };
+        healthTracker.recordSample(subjectIndex, serverTimestamp);
         timestampAlignerRegistry.ingest(
           groupId,
           subjectIndex,
@@ -82,6 +127,8 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
   // unsubscribeGroupChannels에서 clearInterval 처리
   const intervalId = setInterval(() => {
     timestampAlignerRegistry.flush(groupId);
+    // DE 프로세스가 죽으면 watchdog 스레드도 함께 사라지므로 BE가 독립 감지함
+    healthTracker.checkStale(Date.now());
   }, 100);
   // process 종료 시 flush 타이머가 Jest/Node를 block하지 않도록 unref 적용함
   intervalId.unref();
@@ -113,6 +160,33 @@ async function unsubscribeGroupChannels(groupId: string): Promise<void> {
     }
   }
   groupSubscribers.delete(groupId);
+  groupHealthTrackers.delete(groupId);
+}
+
+/**
+ * 현재 그룹 외 다른 활성 DUAL_2PC 그룹의 aligner/구독/레지스트리 전부 정리함 (F1).
+ * 이전 run의 aligner가 allCompleted stop 없이 잔존하면 옛 room으로 계속
+ * aligned_pair를 emit하여 새 그룹 차트가 비는 표류가 발생함. 새 측정 시작 시
+ * 타 그룹을 teardown해 단일 활성 aligner를 보장함.
+ * 현재 그룹에 잔존 구독이 있으면 재구독 전 정리함 (동일 그룹 재시작 누수 방지).
+ *
+ * @param currentGroupId - 이번에 시작하는 그룹 ID (정리 제외 대상)
+ */
+async function teardownStaleGroups(currentGroupId: string): Promise<void> {
+  const activeGroups = new Set<string>([
+    ...groupSubscribers.keys(),
+    ...groupFlushIntervals.keys(),
+  ]);
+  for (const gid of activeGroups) {
+    if (gid === currentGroupId) continue;
+    await unsubscribeGroupChannels(gid);
+    timestampAlignerRegistry.cleanup(gid);
+    engineRegistryService.cleanupGroup(gid);
+  }
+  // 동일 그룹 재시작 — 기존 구독 잔존 시 재구독 전 정리함
+  if (groupSubscribers.has(currentGroupId)) {
+    await unsubscribeGroupChannels(currentGroupId);
+  }
 }
 
 /**
@@ -170,10 +244,55 @@ async function waitForBothEngines(
  * @param groupId - 실험 그룹 ID
  */
 function startDualMeasurement(groupId: string): void {
+  // 동일 groupId 중복 호출 차단 — 원자적 동기 가드
+  if (dualMeasurementInFlight.has(groupId)) {
+    return;
+  }
+  dualMeasurementInFlight.add(groupId);
+  // 최신 시작 그룹 기록 — 대기 중 superseded 판정용 (F1b)
+  activeDualGroup = groupId;
   (async () => {
     try {
+      // 새 측정 시작 전 stale 그룹 aligner/구독 정리 — 단일 활성 보장 (F1)
+      await teardownStaleGroups(groupId);
+
+      // 측정 시작 직전 registry gap 자동복구 (D, codex gpt-5.5 권장) — 자동 페어링
+      // 트리거가 subject 2(원격 Tailscale DE)를 놓친 경우를 여기서 1회 보정함. 폴링 없이
+      // 실패 지점(waitForBothEngines) 바로 앞에서 collectPendingSubjects + triggerAssignGroup
+      // 재사용(수동 dual-trigger와 동일 경로, DE already_registered 멱등). 실패해도 아래
+      // waitForBothEngines timeout이 최종 가드. pending 2개 아니면 skip(DE 준비 미완).
+      // superseded 가드: collectPendingSubjects는 groupId로 필터 안 하고 caller groupId를
+      // attach하므로, 대기 중 다른 그룹에 선점되면 잘못된 그룹에 assign-group 오발행 위험.
+      // await 전후로 activeDualGroup === groupId 재확인함 (CodeRabbit).
+      if (activeDualGroup === groupId) {
+        try {
+          const subjects =
+            await dualTriggerService.collectPendingSubjects(groupId);
+          if (subjects.length === 2 && activeDualGroup === groupId) {
+            await dualTriggerService.triggerAssignGroup(groupId, subjects);
+          }
+        } catch (e) {
+          console.warn(
+            `[측정시작-보정] dual-trigger 보정 실패(무시, wait로 폴백): ${
+              e instanceof Error ? e.message : e
+            }`
+          );
+        }
+      }
+
       // 두 DE 등록 대기 (최대 60초) — 클라이언트에게는 이미 응답 반환됨
       await waitForBothEngines(groupId, config.dualPc.registrationTimeoutMs);
+
+      // 대기 중 다른 그룹이 시작되면 이 그룹은 superseded — 재구독 방지 (F1b).
+      // teardownStaleGroups는 구독 완료 그룹만 정리하므로 startup in-flight는 여기서 차단함.
+      // return 대신 throw로 아래 catch의 terminal cleanup(세션 CANCELLED + 실패 emit)을
+      // 경유함 — 선점된 그룹 세션이 PAIRED 잔류해 이후 흐름 꼬이는 것 방지함 (CodeRabbit #70).
+      if (activeDualGroup !== groupId) {
+        throw new AppError(
+          'DUAL_2PC 측정이 다른 그룹 시작으로 선점되었습니다.',
+          409
+        );
+      }
 
       // ▼ 신규 (T17-4): 두 DE에 streamStart 병렬 호출
       const { engineProxyService } =
@@ -183,6 +302,13 @@ function startDualMeasurement(groupId: string): void {
         engineProxyService.streamStartDual(groupId, 2),
       ]);
       // ▲ 신규
+
+      // 두 DE 스트림 시작 성공 → 양쪽 세션 MEASURING 전이함 (상태머신 정합).
+      // 누락 시 세션이 PAIRED 잔류하여 stop이 PAIRED→COMPLETED 불가로 실패함.
+      await Session.updateMany(
+        { groupId },
+        { status: 'MEASURING', measuredAt: new Date() }
+      );
 
       // aligner registry에 인스턴스 생성
       timestampAlignerRegistry.getOrCreate(
@@ -215,6 +341,8 @@ function startDualMeasurement(groupId: string): void {
         { groupId },
         { status: 'CANCELLED', stopReason: 'ProcessError' }
       );
+    } finally {
+      dualMeasurementInFlight.delete(groupId);
     }
   })();
 }
@@ -222,6 +350,46 @@ function startDualMeasurement(groupId: string): void {
 // ---------------------------------------------------------------------------
 // 공개 서비스 함수
 // ---------------------------------------------------------------------------
+
+/**
+ * groupId 기반 DUAL_2PC 측정 시작 서비스.
+ * 오퍼레이터 대시보드가 sessionId 없이 groupId만 보유한 경우 사용함.
+ *
+ * @param groupId - 실험 그룹 ID
+ * @returns 그룹 ID 반환
+ * @throws AppError 404 — 해당 groupId의 세션 미존재
+ * @throws AppError 400 — experimentMode가 DUAL_2PC가 아님
+ */
+export const startDualMeasurementByGroup = async (
+  groupId: string
+): Promise<{ groupId: string }> => {
+  // groupId로 세션 목록 조회함
+  const sessions = await Session.find({ groupId });
+  if (sessions.length === 0) {
+    throw new AppError('해당 groupId에 속한 세션을 찾을 수 없습니다.', 404);
+  }
+
+  // experimentMode 검증 — 그룹 내 모든 세션이 DUAL_2PC여야 함
+  if (!sessions.every((s) => s.experimentMode === 'DUAL_2PC')) {
+    throw new AppError(
+      'groupId 기반 측정 시작은 DUAL_2PC 모드만 지원합니다.',
+      400
+    );
+  }
+
+  // 상태 전이 가드 — 그룹 내 모든 세션이 MEASURING으로 전이 가능해야 함.
+  // MEASURING 잔류 세션 재트리거(중복 start) 차단함.
+  if (!sessions.every((s) => s.canTransitionTo('MEASURING'))) {
+    throw new AppError(
+      '그룹 내 전이 불가 세션이 존재하여 측정을 시작할 수 없습니다.',
+      400
+    );
+  }
+
+  // fire-and-forget 실행 (기존 함수 재사용)
+  startDualMeasurement(groupId);
+  return { groupId };
+};
 
 /**
  * 뇌파 측정 시작 서비스 (discriminated union 반환, v5 N-9 반영).

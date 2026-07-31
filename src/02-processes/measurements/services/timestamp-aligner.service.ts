@@ -27,6 +27,30 @@ export interface WavePower {
 }
 
 /**
+ * EMOTIV 자체 산출 지표 6종 (0..1 정규화됨).
+ */
+export interface EmotivMetrics {
+  focus: number;
+  engagement: number;
+  interest: number;
+  excitement: number;
+  stress: number;
+  relaxation: number;
+}
+
+/**
+ * 한 subject의 한 시점 샘플.
+ *
+ * waves(대역 파워)와 metrics(EMOTIV 지표)를 함께 실음. metrics는 구버전 DE
+ * 프레임에서 없을 수 있어 optional임. 과거에는 waves만 전달해 FE가 대역 파워를
+ * 지표 자리에 끼워 넣었고(stress에 delta), 차트가 왜곡됐음 (2026-07-10 수정).
+ */
+export interface SubjectSample {
+  waves: WavePower;
+  metrics?: EmotivMetrics;
+}
+
+/**
  * 두 subject 샘플이 타임스탬프 기준으로 정렬된 쌍.
  * v7 H-PREP-1 / v8 H-1: subjectIndex 1-based 통일.
  * snake_case 필드명은 Socket.io 페이로드 계약 (FE AlignedSample 타입과 정합).
@@ -34,8 +58,8 @@ export interface WavePower {
 export interface AlignedSample {
   groupId: string;
   timestamp_ms: number;
-  subject_1: WavePower | null;
-  subject_2: WavePower | null;
+  subject_1: SubjectSample | null;
+  subject_2: SubjectSample | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -45,7 +69,7 @@ export interface AlignedSample {
 /** 버퍼 엔트리 타입 */
 interface BufferEntry {
   ts: number;
-  sample: WavePower;
+  sample: SubjectSample;
 }
 
 /**
@@ -70,12 +94,12 @@ class TimestampAligner {
    * subjectIndex(1 또는 2) 별 buffer push.
    *
    * @param subjectIndex - 1 또는 2 (1-based)
-   * @param sample - EEG 주파수 대역 파워 값
+   * @param sample - 대역 파워와 EMOTIV 지표를 담은 subject 샘플
    * @param serverTimestamp - BE ingest 시각 (Date.now())
    */
   ingest(
     subjectIndex: number,
-    sample: WavePower,
+    sample: SubjectSample,
     serverTimestamp: number
   ): void {
     if (!this.buffer.has(subjectIndex)) {
@@ -149,8 +173,30 @@ class TimestampAligner {
     const newBuf1 = fresh1.filter((_, idx) => !usedIdx1.has(idx));
     const newBuf2 = fresh2.filter((_, idx) => !usedIdx2.has(idx));
 
+    // 단일 헤드셋 지원 — subject 1이 버퍼에 없고, subject 2 샘플이 페어링 윈도
+    // (toleranceMs) 를 넘겨 대기한 경우에만 단독 emit함. buffer 비움이 아니라
+    // "tolerance 초과 미매칭"을 신호로 써서 subject 1의 일시적 지연을 single-headset
+    // 으로 오판하지 않음 (CodeRabbit #68). 윈도 내 어린 샘플은 유지해 late pair 허용.
+    const keptBuf2: BufferEntry[] = [];
+    for (const entry2 of newBuf2) {
+      if (newBuf1.length === 0 && now - entry2.ts > this.toleranceMs) {
+        /* eslint-disable camelcase */
+        const sample: AlignedSample = {
+          groupId: this.groupId,
+          timestamp_ms: entry2.ts,
+          subject_1: null,
+          subject_2: entry2.sample,
+        };
+        /* eslint-enable camelcase */
+        aligned.push(sample);
+        SocketService.emitToGroup(this.groupId, 'aligned_pair', sample);
+      } else {
+        keptBuf2.push(entry2);
+      }
+    }
+
     this.buffer.set(1, newBuf1);
-    this.buffer.set(2, newBuf2);
+    this.buffer.set(2, keptBuf2);
 
     return aligned;
   }
@@ -189,13 +235,13 @@ export const timestampAlignerRegistry = {
    *
    * @param groupId - 실험 그룹 ID
    * @param subjectIndex - 1 또는 2 (1-based)
-   * @param sample - EEG 주파수 대역 파워 값
+   * @param sample - 대역 파워와 EMOTIV 지표를 담은 subject 샘플
    * @param serverTimestamp - BE ingest 시각 (Date.now())
    */
   ingest(
     groupId: string,
     subjectIndex: number,
-    sample: WavePower,
+    sample: SubjectSample,
     serverTimestamp: number
   ): void {
     const aligner = registry.get(groupId);
