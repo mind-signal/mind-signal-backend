@@ -9,7 +9,7 @@
 
 ## 0. 측정 도구 변경 — HANDOFF 임시 공식 폐기 박제
 
-`.plans/H-deep-module-poc/HANDOFF.md` §5 Step 2 잠정 공식
+`.plans/_archive/legacy/H-deep-module-poc/HANDOFF.md` (DOCS-W102) §5 Step 2 잠정 공식
 `depth = behavior_size / public_interface_size, 임계값 2.0`은 **본 PoC에서 사용하지 않음**.
 
 근거: `mind-signal-backend/.claude/skills/improve-codebase-architecture/LANGUAGE.md` §"Rejected framings" 1번 — Matt Pocock이 명시적으로 거부 ("Depth as ratio of implementation-lines to interface-lines — rewards padding the implementation"). 끼워맞추기 방지(`feedback_no_fabricated_evidence`)에도 부합하므로 정성 평가 3축으로 변경:

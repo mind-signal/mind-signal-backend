@@ -91,7 +91,7 @@ dev DB 실측: total=9, subjectIndex >= 1 = 9, legacy null = 0 (T4 dry-run stdou
 - `docs/architecture/decisions/ADR-006-session-aggregate-ddd-pilot.md`
 - `docs/architecture/decisions/ADR-007-clock-port-at-session-seam.md`
 - `docs/architecture/decisions/ADR-008-controller-wiring-strangler-composition-root.md`
-- `.plans/I-pr-a8-invariant-locality/DISCUSS.md`
-- `.plans/I-pr-a8-invariant-locality/PLAN.md` (rev.3)
-- `.plans/I-pr-a8-invariant-locality/HANDOFF.md`
+- `.plans/_archive/legacy/I-pr-a8-invariant-locality/DISCUSS.md` (SESSION-W113)
+- `.plans/_archive/legacy/I-pr-a8-invariant-locality/PLAN.md` (rev.3)
+- `.plans/_archive/legacy/I-pr-a8-invariant-locality/HANDOFF.md`
 - `docs/reports/paar-2026-05-16-pr-a8-regression-sim/` (회귀 시뮬레이션 ABC 6 stdout + dry-run)

@@ -135,11 +135,11 @@ DI 컨테이너 도입 미합의 — 시기상조.
 
 - ADR-007 Clock port at session seam (선행)
 - Phase G DDD/BDD/TDD pilot (ADR-006)
-- DISCUSS rev.3 (`.plans/I-pr-a1-controller-wiring/DISCUSS.md`)
-- PLAN rev.3 (`.plans/I-pr-a1-controller-wiring/PLAN.md`) — cross-review 3 Round 수렴
+- DISCUSS rev.3 (`.plans/_archive/legacy/I-pr-a1-controller-wiring/DISCUSS.md` (SESSION-W108))
+- PLAN rev.3 (`.plans/_archive/legacy/I-pr-a1-controller-wiring/PLAN.md`) — cross-review 3 Round 수렴
 - HANDOFF §4 LOCK 6개
 - codex 5.5 cross-review threads `019e20eb` + `019e21b9` + `019e2bd3` + `019e2bea`
-- K-followup-backlog F-04 (multi-dyno scale-out)
+- DOCS-W103-followup-backlog F-04 (multi-dyno scale-out)
 - HOLD-1 β G9 예외 근거 — DISCUSS rev.1 LOCK
 
 ## Append-only edits

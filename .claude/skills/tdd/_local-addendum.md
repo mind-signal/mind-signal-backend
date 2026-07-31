@@ -73,7 +73,7 @@ Pocock canonical 9 파일은 byte-identical 의무. Phase G가 그 위에 부과
 - **`docs/patterns/ddd-discovery-via-6q.md`** (Phase F 복제 + Phase G 적용 결과 `session-aggregate-6q-applied.md`) — 6Q 답변 박제
 - **`.claude/rules/test-modification.md`** "No Vitest APIs" — 본 스킬을 적용할 때 Jest API만 사용 의무
 - **`.claude/rules/verification-loop.md`** — TDD 사이클 완료 후 `npm run verify` 6단계 PASS 의무
-- **`.plans/G-mind-signal-ddd-bdd-tdd/NAMING-GUIDE.md`** — 본 스킬을 따라 생성한 모든 영어 명사의 한국어 의미 박제
+- **`.plans/_archive/legacy/G-mind-signal-ddd-bdd-tdd/NAMING-GUIDE.md` (SESSION-W107)** — 본 스킬을 따라 생성한 모든 영어 명사의 한국어 의미 박제
 
 ---
 

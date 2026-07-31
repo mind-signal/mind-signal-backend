@@ -8,7 +8,7 @@
 - **Date**: 2026-05-12
 - **Applies to**: BE
 - **Deciders**: @gs07103
-- **Related**: ADR-004 (engine URL abstraction), Phase 18 engine-proxy-sync (LOCK), `.plans/G-mind-signal-ddd-bdd-tdd/CRITIQUE.md` Round 2 (🟡 5 prerequisites), `DOMAIN-MODEL-NOTES.md` (code-review-graph 실측 단일 근거)
+- **Related**: ADR-004 (engine URL abstraction), Phase 18 engine-proxy-sync (LOCK), `.plans/_archive/legacy/G-mind-signal-ddd-bdd-tdd/CRITIQUE.md` (SESSION-W107) Round 2 (🟡 5 prerequisites), `DOMAIN-MODEL-NOTES.md` (code-review-graph 실측 단일 근거)
 
 ## Context
 
@@ -117,7 +117,7 @@
 - Pocock, Tim — outside-in TDD guide (MIT) (Phase F vendored)
 - Garry Tan, gstack — Six forcing questions v2.0.0 (MIT) (Phase F vendored)
 - mind-signal `mind-signal-backend/CLAUDE.md` §7 (status enum), §8 (Operator/Subject ubiquitous language)
-- `.plans/G-mind-signal-ddd-bdd-tdd/DISCUSS.md` rev.4 (Q1~Q6 LOCK + P1 frame)
-- `.plans/G-mind-signal-ddd-bdd-tdd/DOMAIN-MODEL-NOTES.md` (code-review-graph 실측 12 정정 단일 근거)
-- `.plans/G-mind-signal-ddd-bdd-tdd/CRITIQUE.md` Round 1~5 (Verdict 🟡 PROCEED-WITH-CONDITIONS + Contract/Reality/Completeness Lens PASS)
+- `.plans/_archive/legacy/G-mind-signal-ddd-bdd-tdd/DISCUSS.md` rev.4 (Q1~Q6 LOCK + P1 frame)
+- `.plans/_archive/legacy/G-mind-signal-ddd-bdd-tdd/DOMAIN-MODEL-NOTES.md` (code-review-graph 실측 12 정정 단일 근거)
+- `.plans/_archive/legacy/G-mind-signal-ddd-bdd-tdd/CRITIQUE.md` Round 1~5 (Verdict 🟡 PROCEED-WITH-CONDITIONS + Contract/Reality/Completeness Lens PASS)
 - Related ADRs: ADR-004 (엔진 URL 추상화), 후속 미작성 ADR(s) — `__v` 낙관적 잠금, controller 통합 등
