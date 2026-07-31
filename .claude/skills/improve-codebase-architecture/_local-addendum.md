@@ -8,7 +8,7 @@
 
 ## 1. HANDOFF tentative 임계값 폐기 — "depth = behavior / interface lines, threshold 2.0"
 
-`.plans/H-deep-module-poc/HANDOFF.md` §5 Step 2와 §7 미결 사항에 박제된 잠정 공식:
+`.plans/_archive/legacy/H-deep-module-poc/HANDOFF.md` (DOCS-W102) §5 Step 2와 §7 미결 사항에 박제된 잠정 공식:
 
 ```
 depth = behavior_size / public_interface_size — 임계값 2.0 잠정
@@ -82,4 +82,4 @@ SKILL.md §2는 CONTEXT.md vocabulary 사용을 요구. mind-signal-backend는 �
 
 - 원본 4 파일 (`SKILL.md`, `LANGUAGE.md`, `DEEPENING.md`, `INTERFACE-DESIGN.md`) — `mattpocock/skills@main:skills/engineering/improve-codebase-architecture/`
 - HANDOFF 박제된 5번째 파일 REFERENCE.md는 실재하지 않음 (2026-05-13 확인 — repo에는 4 파일만 존재)
-- SHA256 byte-identical 검증 결과는 `.plans/H-deep-module-poc/HANDOFF.md` 후속 박제 예정
+- SHA256 byte-identical 검증 결과는 `.plans/_archive/legacy/H-deep-module-poc/HANDOFF.md` 후속 박제 예정

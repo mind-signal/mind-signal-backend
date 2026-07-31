@@ -8,7 +8,7 @@
 - **Date**: 2026-05-13
 - **Applies to**: BE
 - **Deciders**: @gs07103
-- **Related**: ADR-006 (Session Aggregate DDD Pilot), 이슈 #52, `.plans/H-deep-module-poc/RESULT.md` (Phase H GO, A-7 race trigger 발견), `.plans/I-pr-a7-clock-port/{DISCUSS,PLAN}.md`
+- **Related**: ADR-006 (Session Aggregate DDD Pilot), 이슈 #52, `.plans/_archive/legacy/H-deep-module-poc/RESULT.md` (DOCS-W102) (Phase H GO, A-7 race trigger 발견), `.plans/_archive/legacy/I-pr-a7-clock-port/ (SESSION-W109){DISCUSS,PLAN}.md`
 
 ## Context
 
@@ -88,7 +88,7 @@ PAIRED 상태 + boundary clock 시나리오에서 race 발생 가능:
 ## References
 
 - 이슈 #52: https://github.com/KWONSEOK02/mind-signal-backend/issues/52
-- Phase H GO: `Team-project/.plans/H-deep-module-poc/RESULT.md`
+- Phase H GO: `Team-project/.plans/_archive/legacy/H-deep-module-poc/RESULT.md`
 - Phase H tdd-spec: `mind-signal-backend/docs/reports/paar-2026-05-13-deep-module-poc-tdd-spec.md` §2 5 시나리오
 - Phase H codex r2: thread `019e1f19-f5b3-7150-90b7-e71bd3066b23` (A-7 강한 인정)
 - vendor skill 원리: `.claude/skills/improve-codebase-architecture/`
