@@ -13,7 +13,7 @@ import { resolveCsvDir } from './csv-upload.service';
  * 0개, 간격 중앙값 1.000초인데 282/368 = 76.6%로 거부됨).
  *
  * 지금 분모는 그 CSV 자신의 시간 span이다. 이 비율은 "기록된 구간 안에
- * 구멍이 있는가"를 판정한다.
+ * 구멍이 있는가"를 판정함.
  */
 export const MIN_COVERAGE_RATIO = 0.8;
 
@@ -80,22 +80,11 @@ function computeSpanSeconds(dataLines: string[]): number {
 }
 
 /**
- * 특정 그룹·피실험자의 최신 CSV 데이터 행 수 반환함 (헤더 제외).
- *
- * @param groupId - 측정 그룹 식별자임
- * @param subjectIndex - 피실험자 순번(1 또는 2)임
- * @returns 데이터 행 수 반환. CSV 미발견 시 0 반환
- */
-export function countCsvRows(groupId: string, subjectIndex: number): number {
-  return readCsvStats(groupId, subjectIndex).rows;
-}
-
-/**
  * 기록된 구간 안의 수집 밀도 계산함.
  *
  * 분모가 CSV 자신의 span이므로 "이 사람이 기록한 시간 동안 초당 1행이
- * 제대로 쌓였는가"를 본다. 중간에 스트림이 끊겨 구멍이 나면 span은 그대로인데
- * 행 수만 줄어 비율이 떨어진다.
+ * 제대로 쌓였는가"를 봄. 중간에 스트림이 끊겨 구멍이 나면 span은 그대로인데
+ * 행 수만 줄어 비율이 떨어짐.
  *
  * @param rows - 실제 CSV 데이터 행 수임
  * @param spanSeconds - 첫 행부터 마지막 행까지의 초임
@@ -111,7 +100,7 @@ export function computeDensity(rows: number, spanSeconds: number): number {
  * 예정 측정 구간 대비 실제로 끝까지 기록된 비율 계산함.
  *
  * 게이트가 아니라 관측 지표임. 낮으면 그 피실험자의 스트림이 일찍 멎었거나
- * 전달이 실시간보다 느렸다는 뜻이고, 데이터 자체의 품질과는 무관하다.
+ * 전달이 실시간보다 느렸다는 뜻이고, 데이터 자체의 품질과는 무관함.
  *
  * @param spanSeconds - CSV 첫 행부터 마지막 행까지의 초임
  * @param measuredDurationSeconds - 그룹 측정 wall-clock 초임
@@ -141,10 +130,10 @@ export interface CoverageVerdict {
  * 한 피실험자의 측정이 분석에 쓸 만한지 판정함.
  *
  * 게이트는 셋이다. 최소 측정 시간, 최소 수집 행 수, 그리고 기록 구간 내
- * 수집 밀도다. 완주율은 계산해서 남기기만 하고 탈락 사유로 쓰지 않는다.
+ * 수집 밀도임. 완주율은 계산해서 남기기만 하고 탈락 사유로 쓰지 않음.
  * 늦게 전달됐거나 일찍 끝났다는 사실이 이미 기록된 데이터의 품질을 떨어뜨리지
  * 않기 때문이다. 동조율은 두 CSV의 절대시각 교집합으로 계산되므로(analysis.py
- * align_on_second) 짧은 쪽이 겹침을 줄일 뿐 값을 오염시키지 않는다.
+ * align_on_second) 짧은 쪽이 겹침을 줄일 뿐 값을 오염시키지 않음.
  *
  * @param stats - CSV 행 수와 시간 span임
  * @param measuredDurationSeconds - 그룹 측정 wall-clock 초임
@@ -183,6 +172,17 @@ export function evaluateSubjectCoverage(
       valid: false,
       ...base,
       reason: `수집 샘플 부족 (${rows}행 < ${minAnalysisSeconds}행)`,
+    };
+  }
+  // 행 수는 "1행 1초" 가정 위에서만 시간의 대리 지표임. streamer 오동작이나
+  // 중복 기록으로 행이 초당 1개보다 빨리 쌓이면 span이 수십 초뿐인 CSV도
+  // 행 수 게이트를 통과함. 이 게이트의 존재 이유가 streamer 오동작 방어인데
+  // 자기 가정에 기대면 안 되므로 실제 시간 범위를 직접 검사함
+  if (stats.spanSeconds < minAnalysisSeconds) {
+    return {
+      valid: false,
+      ...base,
+      reason: `기록 구간 부족 (${stats.spanSeconds.toFixed(1)}초 < ${minAnalysisSeconds}초)`,
     };
   }
   if (density < MIN_COVERAGE_RATIO) {

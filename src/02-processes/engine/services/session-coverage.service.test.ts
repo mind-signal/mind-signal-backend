@@ -151,6 +151,18 @@ describe('evaluateSubjectCoverage: 분석 게이트', () => {
     expect(v.reason).toContain('수집 샘플 부족');
   });
 
+  it('행 수는 충분하나 기록 구간이 짧으면 거부함', () => {
+    // 행이 초당 1개보다 빨리 쌓이면(streamer 오동작, 중복 기록) 행 수
+    // 게이트만으로는 안 잡힘. 200행이지만 실제로는 50초어치인 경우
+    const v = evaluateSubjectCoverage(
+      { rows: 200, spanSeconds: 50 },
+      300,
+      MIN_ANALYSIS_SECONDS
+    );
+    expect(v.valid).toBe(false);
+    expect(v.reason).toContain('기록 구간 부족');
+  });
+
   it('측정 시간 미기록이면 거부함', () => {
     const v = evaluateSubjectCoverage(
       { rows: 200, spanSeconds: 200 },
