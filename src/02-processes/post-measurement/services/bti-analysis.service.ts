@@ -33,10 +33,11 @@ export const runBTIAnalysisPipeline = async (
   const targetSession = sessions.find((s) => s.subjectIndex === subjectIndex);
 
   if (!targetSession?.userId) {
-    console.error(
+    // 조용히 return하면 호출부가 실패를 모르고 프론트는 무한 폴링 끝에
+    // "응답 시간 초과"만 보게 됨. 이 PR이 고치려는 바로 그 패턴이라 던짐
+    throw new Error(
       `[btiAnalysis] groupId=${groupId} subject=${subjectIndex} 세션 정보 부족`
     );
-    return;
   }
 
   const user1Id = (targetSession.userId as any)._id;

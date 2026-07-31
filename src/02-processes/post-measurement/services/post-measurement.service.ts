@@ -7,6 +7,22 @@ import { engineProxyService } from '@02-processes/engine/services/engine-proxy.s
 import { config } from '@07-shared/config/config';
 
 /**
+ * MongoDB 중복키 오류(E11000)인지 판정함.
+ *
+ * upsert는 문서가 없을 때만 삽입하지만, 같은 groupId에 대해 두 실행이
+ * 거의 동시에 들어오면 둘 다 "없음"을 보고 삽입을 시도해 뒤늦은 쪽이
+ * unique 인덱스에 걸림. 이 경우 실패가 아니라 다른 실행이 먼저 완료한
+ * 것이므로 사용자에게 "분석 실패"로 보고하면 안 됨.
+ *
+ * @param err - 검사 대상 에러임
+ * @returns 중복키 오류면 true 반환
+ */
+const isDuplicateKeyError = (err: unknown): boolean =>
+  typeof err === 'object' &&
+  err !== null &&
+  (err as { code?: number }).code === 11000;
+
+/**
  * 동조율(-1..1)을 매칭 점수(0..100)로 변환함.
  *
  * 음수 동조율은 역상관(두 피실험자가 반대로 반응)이므로 0으로 클램프함.
@@ -45,10 +61,11 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
   const session2 = sessions.find((s) => s.subjectIndex === 2);
 
   if (!session1?.userId || !session2?.userId) {
-    console.error(
+    // 조용히 return하면 호출부가 실패를 모르고 프론트는 무한 폴링 끝에
+    // "응답 시간 초과"만 보게 됨. 이 PR이 고치려는 바로 그 패턴이라 던짐
+    throw new Error(
       `[postMeasurement] groupId=${groupId} 세션 또는 유저 정보 부족`
     );
-    return;
   }
 
   const user1Id = (session1.userId as any)._id;
@@ -132,16 +149,98 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
     throw err;
   }
 
-  // 3. AnalysisResult 1건 생성함 (그룹 단위).
-  // groupId unique 인덱스가 있으므로 재시도 시 create는 중복키로 터짐
+  // 3~4. 결과 문서 저장함.
+  // 같은 groupId에 두 실행이 거의 동시에 들어오면 둘 다 "문서 없음"을 보고
+  // 삽입을 시도해 뒤늦은 쪽이 unique 인덱스에 걸림. 그것은 실패가 아니라
+  // 다른 실행이 먼저 끝낸 것이므로 사용자에게 실패로 보고하지 않음
+  try {
+    await persistAnalysisOutcome({
+      groupId,
+      user1Id,
+      user2Id,
+      record1Id: record1._id,
+      record2Id: record2._id,
+      matchingScore,
+      synchronyScore,
+      yScore,
+      markdown,
+      pipelineResult,
+    });
+  } catch (err) {
+    if (!isDuplicateKeyError(err)) throw err;
+    console.log(
+      `[postMeasurement] groupId=${groupId} 동시 실행 감지, 다른 실행이 완료함`
+    );
+    return;
+  }
+
+  // 5. EegRecord eegSummary 업데이트함
+  const subjects = pipelineResult.subjects as any[];
+  if (subjects?.length >= 2) {
+    await EegRecord.findByIdAndUpdate(record1._id, {
+      eegSummary: {
+        baseline: subjects[0]?.baseline,
+        features: subjects[0]?.features,
+      },
+    });
+    await EegRecord.findByIdAndUpdate(record2._id, {
+      eegSummary: {
+        baseline: subjects[1]?.baseline,
+        features: subjects[1]?.features,
+      },
+    });
+  }
+
+  console.log(
+    `[postMeasurement] groupId=${groupId} 파이프라인 완료, matchingScore=${matchingScore}`
+  );
+};
+
+/** 분석 결과 저장에 필요한 값 묶음임 */
+interface AnalysisOutcome {
+  groupId: string;
+  user1Id: unknown;
+  user2Id: unknown;
+  record1Id: unknown;
+  record2Id: unknown;
+  matchingScore: number;
+  synchronyScore: number | null;
+  yScore: number | null;
+  markdown: string;
+  pipelineResult: Record<string, unknown>;
+}
+
+/**
+ * AnalysisResult와 MatchingPool을 groupId 기준으로 저장함.
+ *
+ * 둘 다 groupId에 unique 인덱스가 있어 create는 재시도에서 중복키로 터짐.
+ * upsert로 두어 실패 후 재시도가 같은 문서를 갱신하게 함.
+ *
+ * @param outcome - 저장할 분석 결과 값 묶음임
+ * @throws MongoServerError 11000 — 동시 실행이 먼저 삽입한 경우임
+ */
+async function persistAnalysisOutcome(outcome: AnalysisOutcome): Promise<void> {
+  const {
+    groupId,
+    user1Id,
+    user2Id,
+    record1Id,
+    record2Id,
+    matchingScore,
+    synchronyScore,
+    yScore,
+    markdown,
+    pipelineResult,
+  } = outcome;
+
   const analysisResult = await AnalysisResult.findOneAndUpdate(
     { groupId },
     {
       $set: {
         user1Id,
         user2Id,
-        record1Id: record1._id,
-        record2Id: record2._id,
+        record1Id,
+        record2Id,
         surveySummary: '',
         matchingScore,
         synchronyScore,
@@ -173,25 +272,4 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
     },
     { upsert: true }
   );
-
-  // 5. EegRecord eegSummary 업데이트함
-  const subjects = pipelineResult.subjects as any[];
-  if (subjects?.length >= 2) {
-    await EegRecord.findByIdAndUpdate(record1._id, {
-      eegSummary: {
-        baseline: subjects[0]?.baseline,
-        features: subjects[0]?.features,
-      },
-    });
-    await EegRecord.findByIdAndUpdate(record2._id, {
-      eegSummary: {
-        baseline: subjects[1]?.baseline,
-        features: subjects[1]?.features,
-      },
-    });
-  }
-
-  console.log(
-    `[postMeasurement] groupId=${groupId} 파이프라인 완료, matchingScore=${matchingScore}`
-  );
-};
+}
