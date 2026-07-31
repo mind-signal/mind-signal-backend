@@ -5,8 +5,9 @@ import { dualTriggerService } from '../services/dual-2pc-trigger.service';
 import { stopMeasurementService } from '@02-processes/measurements/services/measurement.service';
 import { saveUploadedCsv } from '../services/csv-upload.service';
 import {
-  countCsvRows,
+  MIN_COVERAGE_RATIO,
   evaluateSubjectCoverage,
+  readCsvStats,
 } from '../services/session-coverage.service';
 import { AppError } from '@07-shared/errors';
 import { SocketService } from '@07-shared/lib/socket';
@@ -51,15 +52,33 @@ async function triggerPostMeasurementByTier(groupId: string) {
   // 프로세스 생존 시간뿐 아니라 실제 수집량(coverage)까지 확인함.
   // 스트림이 중간에 죽어도 프로세스가 살아 있으면 duration만으로는 통과하기 때문임.
   const validSessions = completedSessions.filter((s) => {
-    const rows = countCsvRows(groupId, s.subjectIndex as number);
+    const stats = readCsvStats(groupId, s.subjectIndex as number);
     const verdict = evaluateSubjectCoverage(
-      rows,
+      stats,
       s.measuredDurationSeconds,
       MIN_ANALYSIS_SECONDS
     );
-    if (!verdict.valid) {
+    // 판정 여부와 무관하게 세 지표를 남김. 밀도는 게이트, 완주율은 관측용,
+    // legacy는 옛 판정식 값이라 회차 간 비교가 끊기지 않게 함
+    const metrics =
+      `rows=${stats.rows} span=${stats.spanSeconds.toFixed(1)}s ` +
+      `density=${(verdict.density * 100).toFixed(1)}% ` +
+      `completion=${(verdict.completionRatio * 100).toFixed(1)}% ` +
+      `legacy=${(verdict.legacyCoverage * 100).toFixed(1)}%`;
+    if (verdict.valid) {
+      console.log(
+        `[postMeasurement] groupId=${groupId} subject=${s.subjectIndex} 유효: ${metrics}`
+      );
+      // 완주율이 낮으면 데이터는 쓰되 스트림 이상을 경고로 남김
+      if (verdict.completionRatio < MIN_COVERAGE_RATIO) {
+        console.warn(
+          `[postMeasurement] groupId=${groupId} subject=${s.subjectIndex} ` +
+            `완주율 낮음 — 스트림 조기 종료나 전달 지연 의심: ${metrics}`
+        );
+      }
+    } else {
       console.warn(
-        `[postMeasurement] groupId=${groupId} subject=${s.subjectIndex} 제외: ${verdict.reason} (rows=${rows}, coverage=${(verdict.coverage * 100).toFixed(1)}%)`
+        `[postMeasurement] groupId=${groupId} subject=${s.subjectIndex} 제외: ${verdict.reason} (${metrics})`
       );
     }
     return verdict.valid;
@@ -92,18 +111,52 @@ async function triggerPostMeasurementByTier(groupId: string) {
     // DUAL 분석 실행함
     mod
       .runPostMeasurementPipeline(groupId)
-      .catch((err) => console.error('포스트-측정 파이프라인 에러:', err));
+      .catch((err) => notifyPipelineFailure(groupId, 'DUAL', err));
   } else {
-    // PARTIAL — BTI 폴백 분석 실행함
+    // PARTIAL — BTI 폴백 분석 실행함.
+    // 유효 판정을 받은 subject를 넘김. 1로 하드코딩하면 유효한 쪽이 subject 2일
+    // 때 탈락한 데이터를 분석하려다 실패함(2026-07-31 실측)
+    const validSubjectIndex = validSessions[0].subjectIndex as number;
     SocketService.emitLiveEvent('analysis-status', {
       groupId,
       tier: 'PARTIAL',
-      message: '한 명의 데이터로 BTI 개인 분석을 진행합니다.',
+      message: `한 명(subject ${validSubjectIndex})의 데이터로 BTI 개인 분석을 진행합니다.`,
     });
     mod
-      .runBTIAnalysisPipeline(groupId)
-      .catch((err) => console.error('BTI 폴백 파이프라인 에러:', err));
+      .runBTIAnalysisPipeline(groupId, validSubjectIndex)
+      .catch((err) => notifyPipelineFailure(groupId, 'BTI', err));
   }
+}
+
+/**
+ * 분석 파이프라인 실패를 사용자와 로그 양쪽에 알림함.
+ *
+ * 이전에는 두 catch가 console.error만 하고 끝나 프론트가 실패를 알 방법이
+ * 없었음. 결과 화면은 폴링을 계속하다 "응답 시간 초과"만 띄웠고 DB에도
+ * 흔적이 남지 않아 사후 진단이 불가능했음(2026-07-31 실측).
+ *
+ * tier는 ABORTED를 재사용함. 프론트가 이 값에서만 폴링을 중단하고 message를
+ * 표시하므로 프론트 변경 없이 즉시 실패를 전달할 수 있음. 실패 사유는
+ * message로 구분됨.
+ *
+ * @param groupId - 측정 그룹 식별자임
+ * @param pipeline - 실패한 파이프라인 종류임
+ * @param err - 원인 에러임
+ */
+function notifyPipelineFailure(
+  groupId: string,
+  pipeline: 'DUAL' | 'BTI',
+  err: unknown
+): void {
+  const reason = err instanceof Error ? err.message : String(err);
+  console.error(
+    `[postMeasurement] groupId=${groupId} ${pipeline} 파이프라인 실패: ${reason}`
+  );
+  SocketService.emitLiveEvent('analysis-status', {
+    groupId,
+    tier: 'ABORTED',
+    message: `분석에 실패했습니다. 재측정이 필요합니다. (${pipeline} 파이프라인 오류)`,
+  });
 }
 
 export const engineController = {
