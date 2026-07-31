@@ -29,8 +29,11 @@ export const toMatchingScore = (synchronyScore: number | null): number => {
  * 트리거: 두 subject 모두 COMPLETED 감지 시
  */
 export const runPostMeasurementPipeline = async (groupId: string) => {
-  // 0. 멱등성 가드 (C-1): 이미 처리된 그룹이면 스킵함
-  const existing = await MatchingPool.findOne({ groupId });
+  // 0. 멱등성 가드 (C-1): 이미 완료된 그룹이면 스킵함.
+  // status를 COMPLETED로 한정하는 이유: 엔진 실패 시 아래에서 PENDING을
+  // 남기는데, 그것까지 "이미 처리됨"으로 읽으면 재시도가 영구히 막힘.
+  // PENDING을 남기는 목적 자체가 재시도 가능 상태 표시임
+  const existing = await MatchingPool.findOne({ groupId, status: 'COMPLETED' });
   if (existing) {
     console.log(`[postMeasurement] groupId=${groupId} 이미 처리됨, 스킵`);
     return;
@@ -102,7 +105,7 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
     markdown = (pipelineResult.markdown as string) ?? '';
     matchingScore = toMatchingScore(synchronyScore);
   } catch (err) {
-    console.error(`[postMeasurement] 엔진 파이프라인 분석 실패:`, err);
+    console.error(`[postMeasurement] groupId=${groupId} 엔진 분석 실패:`, err);
     // 엔진 실패 시 PENDING 상태로 생성하여 재시도 가능하도록 함
     await MatchingPool.create({
       groupId,
@@ -111,7 +114,9 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
       matchingScore: 0,
       status: 'PENDING',
     });
-    return;
+    // 삼키지 않고 다시 던짐. 호출부가 실패를 소켓으로 알림. 이전에는 여기서
+    // return해 프론트가 무한 폴링 후 "응답 시간 초과"만 보게 됐음
+    throw err;
   }
 
   // 3. AnalysisResult 1건 생성함 (그룹 단위)

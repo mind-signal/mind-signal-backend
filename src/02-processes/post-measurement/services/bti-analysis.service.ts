@@ -46,8 +46,13 @@ export const runBTIAnalysisPipeline = async (groupId: string) => {
     sessionResult = await engineProxyService.analyzeSession(groupId, [1], true);
     markdown = (sessionResult.markdown as string) ?? '';
   } catch (err) {
-    console.error(`[btiAnalysis] 엔진 분석 실패:`, err);
-    return;
+    // 삼키지 않고 다시 던짐. 호출부(triggerPostMeasurementByTier)가 실패를
+    // 소켓으로 알림. 이전에는 여기서 return해 프론트가 무한 폴링 후
+    // "응답 시간 초과"만 보게 됐음(2026-07-31 실측).
+    // AnalysisResult를 만들지 않으므로 멱등성 가드가 실패를 성공으로 오인하지
+    // 않고 재시도가 가능함
+    console.error(`[btiAnalysis] groupId=${groupId} 엔진 분석 실패:`, err);
+    throw err;
   }
 
   // AnalysisResult 생성함 (user2Id = user1Id — BTI 표시)

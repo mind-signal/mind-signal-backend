@@ -92,7 +92,7 @@ async function triggerPostMeasurementByTier(groupId: string) {
     // DUAL 분석 실행함
     mod
       .runPostMeasurementPipeline(groupId)
-      .catch((err) => console.error('포스트-측정 파이프라인 에러:', err));
+      .catch((err) => notifyPipelineFailure(groupId, 'DUAL', err));
   } else {
     // PARTIAL — BTI 폴백 분석 실행함
     SocketService.emitLiveEvent('analysis-status', {
@@ -102,8 +102,39 @@ async function triggerPostMeasurementByTier(groupId: string) {
     });
     mod
       .runBTIAnalysisPipeline(groupId)
-      .catch((err) => console.error('BTI 폴백 파이프라인 에러:', err));
+      .catch((err) => notifyPipelineFailure(groupId, 'BTI', err));
   }
+}
+
+/**
+ * 분석 파이프라인 실패를 사용자와 로그 양쪽에 알림함.
+ *
+ * 이전에는 두 catch가 console.error만 하고 끝나 프론트가 실패를 알 방법이
+ * 없었음. 결과 화면은 폴링을 계속하다 "응답 시간 초과"만 띄웠고 DB에도
+ * 흔적이 남지 않아 사후 진단이 불가능했음(2026-07-31 실측).
+ *
+ * tier는 ABORTED를 재사용함. 프론트가 이 값에서만 폴링을 중단하고 message를
+ * 표시하므로 프론트 변경 없이 즉시 실패를 전달할 수 있음. 실패 사유는
+ * message로 구분됨.
+ *
+ * @param groupId - 측정 그룹 식별자임
+ * @param pipeline - 실패한 파이프라인 종류임
+ * @param err - 원인 에러임
+ */
+function notifyPipelineFailure(
+  groupId: string,
+  pipeline: 'DUAL' | 'BTI',
+  err: unknown
+): void {
+  const reason = err instanceof Error ? err.message : String(err);
+  console.error(
+    `[postMeasurement] groupId=${groupId} ${pipeline} 파이프라인 실패: ${reason}`
+  );
+  SocketService.emitLiveEvent('analysis-status', {
+    groupId,
+    tier: 'ABORTED',
+    message: `분석에 실패했습니다. 재측정이 필요합니다. (${pipeline} 파이프라인 오류)`,
+  });
 }
 
 export const engineController = {
