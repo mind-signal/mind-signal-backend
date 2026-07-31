@@ -94,14 +94,17 @@ async function triggerPostMeasurementByTier(groupId: string) {
       .runPostMeasurementPipeline(groupId)
       .catch((err) => notifyPipelineFailure(groupId, 'DUAL', err));
   } else {
-    // PARTIAL — BTI 폴백 분석 실행함
+    // PARTIAL — BTI 폴백 분석 실행함.
+    // 유효 판정을 받은 subject를 넘김. 1로 하드코딩하면 유효한 쪽이 subject 2일
+    // 때 탈락한 데이터를 분석하려다 실패함(2026-07-31 실측)
+    const validSubjectIndex = validSessions[0].subjectIndex as number;
     SocketService.emitLiveEvent('analysis-status', {
       groupId,
       tier: 'PARTIAL',
-      message: '한 명의 데이터로 BTI 개인 분석을 진행합니다.',
+      message: `한 명(subject ${validSubjectIndex})의 데이터로 BTI 개인 분석을 진행합니다.`,
     });
     mod
-      .runBTIAnalysisPipeline(groupId)
+      .runBTIAnalysisPipeline(groupId, validSubjectIndex)
       .catch((err) => notifyPipelineFailure(groupId, 'BTI', err));
   }
 }

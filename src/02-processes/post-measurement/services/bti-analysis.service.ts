@@ -5,10 +5,22 @@ import { Consent } from '@06-entities/consents';
 import { engineProxyService } from '@02-processes/engine/services/engine-proxy.service';
 
 /**
- * BTI(1인) 분석 파이프라인 수행함
- * 트리거: BTI 모드에서 Subject 1 COMPLETED 감지 시
+ * BTI(1인) 분석 파이프라인 수행함.
+ *
+ * 트리거는 둘이다. BTI 모드 측정 완료, 그리고 DUAL 측정에서 한쪽만 유효
+ * 판정을 받은 PARTIAL 폴백이다.
+ *
+ * subjectIndex를 인자로 받는 이유: 이전에는 1로 하드코딩해, 유효한 쪽이
+ * subject 2인데도 탈락한 subject 1을 분석하려다 실패했음(2026-07-31 실측).
+ * 호출부가 이미 coverage로 유효 subject를 계산해 두므로 그 값을 넘겨받는다.
+ *
+ * @param groupId - 측정 그룹 식별자임
+ * @param subjectIndex - 분석 대상 피실험자 순번임. 생략 시 1임
  */
-export const runBTIAnalysisPipeline = async (groupId: string) => {
+export const runBTIAnalysisPipeline = async (
+  groupId: string,
+  subjectIndex: number = 1
+) => {
   // 멱등성 가드: 이미 결과가 있으면 스킵함
   const existing = await AnalysisResult.findOne({ groupId });
   if (existing) {
@@ -16,23 +28,26 @@ export const runBTIAnalysisPipeline = async (groupId: string) => {
     return;
   }
 
-  // 세션 1건 조회함
+  // 대상 세션 1건 조회함
   const sessions = await Session.find({ groupId }).populate('userId');
-  const session1 = sessions.find((s) => s.subjectIndex === 1);
+  const targetSession = sessions.find((s) => s.subjectIndex === subjectIndex);
 
-  if (!session1?.userId) {
-    console.error(`[btiAnalysis] groupId=${groupId} Subject 1 세션 정보 부족`);
+  if (!targetSession?.userId) {
+    console.error(
+      `[btiAnalysis] groupId=${groupId} subject=${subjectIndex} 세션 정보 부족`
+    );
     return;
   }
 
-  const user1Id = (session1.userId as any)._id;
+  const user1Id = (targetSession.userId as any)._id;
 
-  // EegRecord 1건 생성함
+  // EegRecord 1건 생성함. 경로와 분석 대상이 어긋나지 않도록 같은
+  // subjectIndex로 둘 다 결정함
   const consent1 = await Consent.findOne({ userId: user1Id });
   const record1Doc: any = {
     userId: user1Id,
-    sessionId: session1._id,
-    rawDataPath: `data/${groupId}/subject_1.csv`,
+    sessionId: targetSession._id,
+    rawDataPath: `data/${groupId}/subject_${subjectIndex}.csv`,
     eegSummary: {},
   };
   if (consent1?._id) record1Doc.consentId = consent1._id;
@@ -43,7 +58,11 @@ export const runBTIAnalysisPipeline = async (groupId: string) => {
   let markdown = '';
 
   try {
-    sessionResult = await engineProxyService.analyzeSession(groupId, [1], true);
+    sessionResult = await engineProxyService.analyzeSession(
+      groupId,
+      [subjectIndex],
+      true
+    );
     markdown = (sessionResult.markdown as string) ?? '';
   } catch (err) {
     // 삼키지 않고 다시 던짐. 호출부(triggerPostMeasurementByTier)가 실패를
