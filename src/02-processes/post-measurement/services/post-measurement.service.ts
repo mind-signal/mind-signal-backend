@@ -45,6 +45,28 @@ export const toMatchingScore = (synchronyScore: number | null): number => {
 };
 
 /**
+ * 엔진이 준 friendshipScore를 검증해 반환함.
+ *
+ * 엔진 응답은 `Record<string, unknown>`이라 타입이 보장되지 않음. `undefined`는
+ * 구 엔진(필드 없음), `null`은 신 엔진의 미측정으로 의미가 다르므로 둘 다
+ * 보존하고, 그 외에는 유한한 수치만 통과시킴. 문자열이나 NaN이 그대로
+ * 흘러가면 스키마 검증에서 결과가 통째로 유실됨.
+ *
+ * @param raw - 엔진 응답의 friendshipScore 값임
+ * @returns 유한 수치 또는 null 반환
+ * @throws Error — 수치가 아니거나 유한하지 않은 경우임
+ */
+const parseFriendshipScore = (raw: unknown): number | null => {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    throw new Error(
+      `[postMeasurement] friendshipScore가 유한 수치가 아님: ${String(raw)}`
+    );
+  }
+  return raw;
+};
+
+/**
  * 포스트-측정 오케스트레이션 파이프라인 수행함
  * 트리거: 두 subject 모두 COMPLETED 감지 시
  */
@@ -142,8 +164,9 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
     // Math.round(undefined)가 NaN이 되고 스키마 min/max 검증에서 결과가
     // 통째로 유실됨(toMatchingScore JSDoc의 2026-07-10 사례와 같은 실패)
     const hasFriendship = pipelineResult.friendshipScore !== undefined;
-    const friendshipScore =
-      (pipelineResult.friendshipScore as number | null) ?? null;
+    const friendshipScore = parseFriendshipScore(
+      pipelineResult.friendshipScore
+    );
     // 미측정(null)은 0으로 저장할 수밖에 없음(스키마 required). 완전 역상관과
     // 구분해야 하면 synchronyScore가 null인지로 판별함
     matchingScore = hasFriendship

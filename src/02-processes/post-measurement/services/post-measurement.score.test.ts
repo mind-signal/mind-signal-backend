@@ -81,7 +81,7 @@ describe('runPostMeasurementPipeline: matchingScore 산출 경로', () => {
     expect(savedMatchingScore()).toBe(50);
   });
 
-  it('소수 점수를 반올림해 0..100으로 클램프함', async () => {
+  it('소수 점수를 반올림함', async () => {
     (engineProxyService.analyzePipeline as jest.Mock).mockResolvedValue({
       synchronyScore: 0.31,
       friendshipScore: 65.6,
@@ -91,6 +91,36 @@ describe('runPostMeasurementPipeline: matchingScore 산출 경로', () => {
     await runPostMeasurementPipeline(GROUP_ID);
 
     expect(savedMatchingScore()).toBe(66);
+  });
+
+  it.each([
+    [-1, 0],
+    [101, 100],
+  ])('범위를 벗어난 %p을 %p으로 클램프함', async (given, expected) => {
+    (engineProxyService.analyzePipeline as jest.Mock).mockResolvedValue({
+      synchronyScore: 0.5,
+      friendshipScore: given,
+      markdown: '# ok',
+    });
+
+    await runPostMeasurementPipeline(GROUP_ID);
+
+    expect(savedMatchingScore()).toBe(expected);
+  });
+
+  it('유한 수치가 아닌 점수는 저장하지 않고 실패로 보고함', async () => {
+    // 엔진 응답은 Record<string, unknown>이라 타입이 보장되지 않음.
+    // 문자열이 그대로 흘러가면 스키마 검증에서 결과가 통째로 유실됨
+    (engineProxyService.analyzePipeline as jest.Mock).mockResolvedValue({
+      synchronyScore: 0.5,
+      friendshipScore: 'not-a-number',
+      markdown: '# ok',
+    });
+
+    await expect(runPostMeasurementPipeline(GROUP_ID)).rejects.toThrow(
+      /friendshipScore/
+    );
+    expect(AnalysisResult.findOneAndUpdate).not.toHaveBeenCalled();
   });
 
   it('필드가 없는 구 엔진에는 동조율 변환으로 폴백함 (NaN 회귀 가드)', async () => {
