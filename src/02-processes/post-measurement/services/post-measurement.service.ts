@@ -52,16 +52,21 @@ export const toMatchingScore = (synchronyScore: number | null): number => {
  * 보존하고, 그 외에는 유한한 수치만 통과시킴. 문자열이나 NaN이 그대로
  * 흘러가면 스키마 검증에서 결과가 통째로 유실됨.
  *
+ * 값이 오염됐을 때 던지지 않는 이유: subjects와 markdown과 synchronyScore가
+ * 전부 정상인데 필드 하나 때문에 결과를 통째로 버리게 됨. 그것은 이 함수가
+ * 막으려던 실패 모드와 결과가 같으므로, 경고를 남기고 구 엔진 폴백으로 강등함.
+ *
  * @param raw - 엔진 응답의 friendshipScore 값임
- * @returns 유한 수치 또는 null 반환
- * @throws Error — 수치가 아니거나 유한하지 않은 경우임
+ * @returns 유한 수치, 미측정이면 null, 필드 부재나 오염이면 undefined 반환
  */
-const parseFriendshipScore = (raw: unknown): number | null => {
-  if (raw === undefined || raw === null) return null;
+const parseFriendshipScore = (raw: unknown): number | null | undefined => {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
   if (typeof raw !== 'number' || !Number.isFinite(raw)) {
-    throw new Error(
-      `[postMeasurement] friendshipScore가 유한 수치가 아님: ${String(raw)}`
+    console.error(
+      `[postMeasurement] friendshipScore가 유한 수치가 아니라 폴백함: ${String(raw)}`
     );
+    return undefined;
   }
   return raw;
 };
@@ -163,10 +168,10 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
     // null(신 엔진의 미측정)을 반드시 구분할 것 — undefined를 값으로 다루면
     // Math.round(undefined)가 NaN이 되고 스키마 min/max 검증에서 결과가
     // 통째로 유실됨(toMatchingScore JSDoc의 2026-07-10 사례와 같은 실패)
-    const hasFriendship = pipelineResult.friendshipScore !== undefined;
     const friendshipScore = parseFriendshipScore(
       pipelineResult.friendshipScore
     );
+    const hasFriendship = friendshipScore !== undefined;
     // 미측정(null)은 0으로 저장할 수밖에 없음(스키마 required). 완전 역상관과
     // 구분해야 하면 synchronyScore가 null인지로 판별함
     matchingScore = hasFriendship

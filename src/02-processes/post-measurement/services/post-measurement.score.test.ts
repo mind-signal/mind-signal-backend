@@ -108,19 +108,19 @@ describe('runPostMeasurementPipeline: matchingScore 산출 경로', () => {
     expect(savedMatchingScore()).toBe(expected);
   });
 
-  it('유한 수치가 아닌 점수는 저장하지 않고 실패로 보고함', async () => {
-    // 엔진 응답은 Record<string, unknown>이라 타입이 보장되지 않음.
-    // 문자열이 그대로 흘러가면 스키마 검증에서 결과가 통째로 유실됨
+  it('유한 수치가 아닌 점수는 폴백으로 강등하고 결과는 저장함', async () => {
+    // 엔진 응답은 Record<string, unknown>이라 타입이 보장되지 않음. 다만
+    // 나머지가 정상인데 필드 하나로 결과를 통째로 버리면 막으려던 실패 모드와
+    // 결과가 같아지므로, 경고를 남기고 구 엔진 폴백으로 내린다
     (engineProxyService.analyzePipeline as jest.Mock).mockResolvedValue({
       synchronyScore: 0.5,
       friendshipScore: 'not-a-number',
       markdown: '# ok',
     });
 
-    await expect(runPostMeasurementPipeline(GROUP_ID)).rejects.toThrow(
-      /friendshipScore/
-    );
-    expect(AnalysisResult.findOneAndUpdate).not.toHaveBeenCalled();
+    await runPostMeasurementPipeline(GROUP_ID);
+
+    expect(savedMatchingScore()).toBe(50);
   });
 
   it('필드가 없는 구 엔진에는 동조율 변환으로 폴백함 (NaN 회귀 가드)', async () => {
