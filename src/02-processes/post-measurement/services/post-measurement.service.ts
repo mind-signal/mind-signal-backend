@@ -25,6 +25,10 @@ const isDuplicateKeyError = (err: unknown): boolean =>
 /**
  * 동조율(-1..1)을 매칭 점수(0..100)로 변환함.
  *
+ * **구 엔진 폴백 전용임.** ANALYSIS-W004 이후 엔진이 정본 수식 점수
+ * `friendshipScore`를 직접 주므로 그 필드가 응답에 있으면 이 변환을 쓰지 않음.
+ * 필드가 없는 구 엔진이 붙어 있는 동안만 유효함.
+ *
  * 음수 동조율은 역상관(두 피실험자가 반대로 반응)이므로 0으로 클램프함.
  * 클램프 없이 저장하면 AnalysisResult/MatchingPool 스키마의 min:0 검증에 걸려
  * ValidationError가 발생하고 결과가 통째로 유실됨(2026-07-10 라이브 실측).
@@ -132,7 +136,26 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
     synchronyScore = (pipelineResult.synchronyScore as number) ?? null;
     yScore = (pipelineResult.yScore as number) ?? null;
     markdown = (pipelineResult.markdown as string) ?? '';
-    matchingScore = toMatchingScore(synchronyScore);
+
+    // 엔진이 정본 수식 점수를 주면 그대로 씀. undefined(필드 자체 없음)와
+    // null(신 엔진의 미측정)을 반드시 구분할 것 — undefined를 값으로 다루면
+    // Math.round(undefined)가 NaN이 되고 스키마 min/max 검증에서 결과가
+    // 통째로 유실됨(toMatchingScore JSDoc의 2026-07-10 사례와 같은 실패)
+    const hasFriendship = pipelineResult.friendshipScore !== undefined;
+    const friendshipScore =
+      (pipelineResult.friendshipScore as number | null) ?? null;
+    // 미측정(null)은 0으로 저장할 수밖에 없음(스키마 required). 완전 역상관과
+    // 구분해야 하면 synchronyScore가 null인지로 판별함
+    matchingScore = hasFriendship
+      ? friendshipScore === null
+        ? 0
+        : Math.min(100, Math.max(0, Math.round(friendshipScore)))
+      : toMatchingScore(synchronyScore);
+    console.log(
+      `[postMeasurement] groupId=${groupId} 점수 경로=${
+        hasFriendship ? 'friendshipScore' : 'legacy-synchrony'
+      }`
+    );
   } catch (err) {
     console.error(`[postMeasurement] groupId=${groupId} 엔진 분석 실패:`, err);
     // 엔진 실패 시 PENDING 상태로 남겨 재시도 가능하도록 함.
