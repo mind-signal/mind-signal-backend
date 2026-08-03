@@ -132,7 +132,7 @@ router.post(
 const analyzePipelineSchema = z.object({
   groupId: z.string().min(1),
   subjectIndices: z.array(z.number().int().positive()),
-  mode: z.enum(['DUAL', 'SEQUENTIAL', 'BTI']).optional().default('DUAL'),
+  mode: z.enum(['DUAL', 'BTI']).optional().default('DUAL'),
   algorithm: z.string().optional().default('default'),
   params: z
     .object({

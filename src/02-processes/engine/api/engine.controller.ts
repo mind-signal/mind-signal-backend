@@ -25,25 +25,6 @@ const MIN_ANALYSIS_SECONDS = 180;
 async function triggerPostMeasurementByTier(groupId: string) {
   const { Session: SessionModel } = await import('@06-entities/sessions');
 
-  // SEQUENTIAL 모드 조기 분기: 자동 분석 트리거 안 함 (I2 + N1)
-  // subjectIndex: { $ne: null } 필터로 null 세션이 대표 세션으로 선택되는 경우 방지함
-  const representativeSession = await SessionModel.findOne({
-    groupId,
-    subjectIndex: { $ne: null },
-  }).sort({ subjectIndex: 1 });
-  const experimentMode = representativeSession?.experimentMode ?? 'DUAL';
-
-  if (experimentMode === 'SEQUENTIAL') {
-    // operator "Analyze" 버튼 대기 — 소켓으로 측정 완료만 알림
-    SocketService.emitLiveEvent('analysis-status', {
-      groupId,
-      tier: 'SEQUENTIAL',
-      message:
-        'SEQUENTIAL 모드 측정 완료. "Analyze" 버튼으로 분석을 시작하세요.',
-    });
-    return;
-  }
-
   const completedSessions = await SessionModel.find({
     groupId,
     status: 'COMPLETED',

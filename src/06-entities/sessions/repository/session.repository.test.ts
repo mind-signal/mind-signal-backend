@@ -45,7 +45,7 @@ const makeAggregate = (
     subjectIndex: 1,
     pairingToken: 'TOK001',
     operatorId: new Types.ObjectId().toString(),
-    mode: 'SEQUENTIAL',
+    mode: 'DUAL_2PC',
     expiresAt: new Date(Date.now() + 60_000),
     ...override,
   });
@@ -96,7 +96,7 @@ describe('SessionRepository (통합 — Mongoose Model mock)', () => {
     expect(restored!.groupId).toBe('A1B2C3D4');
     expect(restored!.subjectIndex).toBe(1);
     expect(restored!.pairingToken).toBe('TOK001');
-    expect(restored!.mode).toBe('SEQUENTIAL');
+    expect(restored!.mode).toBe('DUAL_2PC');
     expect(restored!.status).toBe('CREATED');
   });
 

@@ -3,7 +3,7 @@
  *
  * 검증 항목:
  *   - analyzePipelineSchema에 mode 필드(enum)가 추가됨
- *   - mode: 'SEQUENTIAL', 'DUAL', 'BTI' 모두 허용됨
+ *   - mode: 'DUAL', 'BTI' 허용됨 (SEQUENTIAL 은 SESSION-W002 에서 제거)
  *   - mode: 'INVALID' 시 파싱 실패함
  *   - algorithm 필드가 추가됨
  *   - 기존 groupId, subjectIndices 검증이 유지됨
@@ -20,9 +20,9 @@ describe('engine.routes.ts: analyzePipelineSchema 확장 검증', () => {
     source = fs.readFileSync(filePath, 'utf-8');
   });
 
-  it("analyzePipelineSchema에 mode 필드가 추가됨 (z.enum(['DUAL','SEQUENTIAL','BTI']))", () => {
+  it("analyzePipelineSchema의 mode 가 z.enum(['DUAL','BTI']) 임", () => {
     expect(source).toContain('mode');
-    expect(source).toContain("z.enum(['DUAL', 'SEQUENTIAL', 'BTI'])");
+    expect(source).toContain("z.enum(['DUAL', 'BTI'])");
   });
 
   it("mode 필드의 default가 'DUAL'로 설정됨", () => {
@@ -57,17 +57,17 @@ describe('engine.routes.ts: analyzePipelineSchema Zod 런타임 검증', () => {
     analyzePipelineSchema = z.object({
       groupId: z.string().min(1),
       subjectIndices: z.array(z.number().int().positive()),
-      mode: z.enum(['DUAL', 'SEQUENTIAL', 'BTI']).optional().default('DUAL'),
+      mode: z.enum(['DUAL', 'BTI']).optional().default('DUAL'),
       algorithm: z.string().optional().default('default'),
     });
   });
 
-  it("mode: 'SEQUENTIAL'이 스키마 검증을 통과함", () => {
+  it("mode: 'BTI'가 스키마 검증을 통과함", () => {
     if (!analyzePipelineSchema) return;
     const result = analyzePipelineSchema.safeParse({
       groupId: 'grp_test',
       subjectIndices: [1, 2],
-      mode: 'SEQUENTIAL',
+      mode: 'BTI',
     });
     expect(result.success).toBe(true);
   });

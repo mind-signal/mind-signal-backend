@@ -22,7 +22,7 @@ const makeAggregate = (
     subjectIndex: 1,
     pairingToken: 'TOK001',
     operatorId: new Types.ObjectId().toString(),
-    mode: 'SEQUENTIAL',
+    mode: 'DUAL_2PC',
     expiresAt: new Date(TEST_NOW.getTime() + 60_000),
     ...override,
   });
@@ -61,7 +61,7 @@ describe('PairSubjectService', () => {
     expect(result.event.userId).toBe(userId);
     expect(result.event.groupId).toBe('A1B2C3D4');
     expect(result.event.subjectIndex).toBe(1);
-    expect(result.event.mode).toBe('SEQUENTIAL');
+    expect(result.event.mode).toBe('DUAL_2PC');
 
     // 메모리 기록 확인
     const events = service.drainRecordedEvents();
