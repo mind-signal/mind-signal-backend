@@ -67,7 +67,7 @@ beforeEach(() => {
   (MatchingPool.findOneAndUpdate as jest.Mock).mockResolvedValue({});
 });
 
-describe('runPostMeasurementPipeline: matchingScore 산출 경로', () => {
+describe('[TS-AI-01] runPostMeasurementPipeline: matchingScore 산출 경로', () => {
   it('엔진이 friendshipScore를 주면 그 값을 저장함', async () => {
     // 상관 0의 정본 점수는 50임. 구 변환이었다면 0이 저장됨
     (engineProxyService.analyzePipeline as jest.Mock).mockResolvedValue({

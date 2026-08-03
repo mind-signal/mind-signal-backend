@@ -111,7 +111,7 @@ function makeInviteToken(groupId: string, opts?: jwt.SignOptions): string {
   );
 }
 
-describe('POST /api/sessions/:groupId/invite-operator (BE-1-invite)', () => {
+describe('[TS-SESSION-16] POST /api/sessions/:groupId/invite-operator (BE-1-invite)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -161,7 +161,7 @@ describe('POST /api/sessions/:groupId/invite-operator (BE-1-invite)', () => {
   });
 });
 
-describe('POST /api/sessions/join-as-operator (BE-1-join)', () => {
+describe('[TS-SESSION-16][TS-SESSION-17] POST /api/sessions/join-as-operator (BE-1-join)', () => {
   let socketHttpServer: http.Server;
   let socketServerUrl: string;
 

@@ -49,7 +49,7 @@ const makeInMemoryRepo = () => {
 };
 
 describe('Feature: 피실험자가 QR을 스캔해 세션에 합류함', () => {
-  describe('Scenario: SEQUENTIAL 모드의 첫 페어링이 성공함', () => {
+  describe('[TS-SESSION-03] Scenario: SEQUENTIAL 모드의 첫 페어링이 성공함', () => {
     test(
       'Given operator alice가 SEQUENTIAL 모드 세션을 생성했고, ' +
         'When subject bob (userId)이 pairingToken으로 합류 요청을 보내면, ' +
@@ -105,7 +105,7 @@ describe('Feature: 피실험자가 QR을 스캔해 세션에 합류함', () => {
     );
   });
 
-  describe('Scenario: 만료된 토큰으로 페어링 시 실패함', () => {
+  describe('[TS-SESSION-02] Scenario: 만료된 토큰으로 페어링 시 실패함', () => {
     test(
       'Given 만료된 pairingToken을 가진 세션이 존재하고, ' +
         'When subject가 그 토큰으로 합류 시도하면, ' +
@@ -149,7 +149,7 @@ describe('Feature: 피실험자가 QR을 스캔해 세션에 합류함', () => {
     );
   });
 
-  describe('Scenario: 이미 사용된 토큰으로 페어링 시 실패함', () => {
+  describe('[TS-SESSION-04] Scenario: 이미 사용된 토큰으로 페어링 시 실패함', () => {
     test(
       'Given 이미 PAIRED 상태인 세션이 존재하고, ' +
         'When 다른 subject가 같은 토큰으로 합류 시도하면, ' +
@@ -244,7 +244,7 @@ const makeStubRepoWithCreatedSession = async (params: {
 };
 
 describe('Feature: Clock seam race 차단 (A-7) + single observed now (ADR-007)', () => {
-  describe('Scenario 4 — Clock seam race (Context A/B/C)', () => {
+  describe('[TS-SESSION-07][TS-SESSION-08] Scenario 4 — Clock seam race (Context A/B/C)', () => {
     test('Context A: FixedClock T-1ms + status=CREATED → paired (결정적)', async () => {
       const T = new Date('2026-05-13T11:00:00.000Z');
       const { repo, aggregate } = await makeStubRepoWithCreatedSession({

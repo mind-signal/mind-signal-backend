@@ -97,7 +97,7 @@ describe('SessionAggregate', () => {
     });
   });
 
-  describe('markMeasuring() & cancel()', () => {
+  describe('[TS-SESSION-12] markMeasuring() & cancel()', () => {
     test('7. markMeasuring() 실패 — CREATED에서 호출 → InvalidStatusTransitionError', () => {
       const aggregate = SessionAggregate.create(baseParams());
       expect(() => aggregate.markMeasuring()).toThrow(
