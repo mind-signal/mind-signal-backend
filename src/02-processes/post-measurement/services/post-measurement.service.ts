@@ -63,8 +63,17 @@ const parseFriendshipScore = (raw: unknown): number | null | undefined => {
   if (raw === undefined) return undefined;
   if (raw === null) return null;
   if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    // 값이 아니라 분류만 기록함. raw는 엔진 경계에서 온 unknown이라
+    // 잘못 매핑된 이메일이나 토큰이나 payload 전체가 운영 로그에 남을 수 있음.
+    // 비유한 수치(NaN, Infinity)는 그 자체가 PII가 아니므로 값을 남겨 진단에 씀
+    const kind =
+      typeof raw === 'number'
+        ? String(raw)
+        : Array.isArray(raw)
+          ? 'array'
+          : typeof raw;
     console.error(
-      `[postMeasurement] friendshipScore가 유한 수치가 아니라 폴백함: ${String(raw)}`
+      `[postMeasurement] friendshipScore가 유한 수치가 아니라 폴백함: ${kind}`
     );
     return undefined;
   }
