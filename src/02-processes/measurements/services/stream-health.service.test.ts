@@ -27,7 +27,7 @@ const emitToGroup = SocketService.emitToGroup as jest.Mock;
 const GROUP = 'group-abc';
 const THRESHOLD = 20_000;
 
-describe('StreamHealthTracker', () => {
+describe('[TS-STREAM-02] StreamHealthTracker', () => {
   beforeEach(() => jest.clearAllMocks());
 
   it('정상 수신 중에는 아무 경보도 보내지 않음', () => {

@@ -143,7 +143,7 @@ describe('measurementGroupStartParamsSchema Zod 런타임 검증', () => {
   });
 });
 
-describe('POST /sessions/:sessionId/eeg/stream:start — validateParams 라우트 통합', () => {
+describe('[TS-EEG-01] POST /sessions/:sessionId/eeg/stream:start — validateParams 라우트 통합', () => {
   const app = buildMeasurementApp();
 
   it('유효한 ObjectId sessionId로 요청 시 200 반환함', async () => {

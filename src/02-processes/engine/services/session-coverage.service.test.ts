@@ -85,7 +85,7 @@ describe('computeCompletionRatio: 예정 구간 대비 완주율 (게이트 아�
   });
 });
 
-describe('evaluateSubjectCoverage: 분석 게이트', () => {
+describe('[TS-EEG-05][TS-EEG-06] evaluateSubjectCoverage: 분석 게이트', () => {
   it('2026-07-31 subject_1을 통과시킴 (구 로직은 76.6%로 탈락시켰음)', () => {
     const v = evaluateSubjectCoverage(
       CASE.stalled0731.stats,
