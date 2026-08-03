@@ -292,7 +292,6 @@ async function persistAnalysisOutcome(outcome: AnalysisOutcome): Promise<void> {
         user2Id,
         record1Id,
         record2Id,
-        surveySummary: '',
         matchingScore,
         synchronyScore,
         yScore,

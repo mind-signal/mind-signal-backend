@@ -88,7 +88,6 @@ export const runBTIAnalysisPipeline = async (
     user2Id: user1Id,
     record1Id: record1._id,
     record2Id: record1._id,
-    surveySummary: '',
     matchingScore: 0,
     synchronyScore: null,
     yScore: null,
