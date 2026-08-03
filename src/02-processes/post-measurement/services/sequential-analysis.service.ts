@@ -112,7 +112,6 @@ export const runSequentialAnalysisPipeline = async (
       user2Id,
       record1Id: record1._id,
       record2Id: record2._id,
-      surveySummary: '',
       matchingScore:
         typeof similarityFeatures?.similarity_score === 'number'
           ? Math.round(similarityFeatures.similarity_score * 100)

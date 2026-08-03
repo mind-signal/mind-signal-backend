@@ -7,7 +7,6 @@ export interface AnalysisResult {
   user2Id: Types.ObjectId; // Subject 2 User 참조
   record1Id: Types.ObjectId; // Subject 1 EEG 기록 참조
   record2Id: Types.ObjectId; // Subject 2 EEG 기록 참조
-  surveySummary: string; // 설문 요약 내용
   matchingScore: number; // 매칭 점수 (0-100)
   synchronyScore: number | null; // 뇌파 동기화 점수
   yScore: number | null; // 파이프라인 Y 점수
@@ -55,7 +54,6 @@ const analysisResultSchema = new Schema<
       ref: 'EegRecord',
       required: true,
     },
-    surveySummary: { type: String, default: '' },
     matchingScore: { type: Number, required: true, min: 0, max: 100 },
     synchronyScore: { type: Number, default: null },
     yScore: { type: Number, default: null },
