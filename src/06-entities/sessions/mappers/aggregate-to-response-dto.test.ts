@@ -48,8 +48,8 @@ describe('aggregateToPairingResponseDto', () => {
     expect(dto).not.toHaveProperty('operatorId');
   });
 
-  it('M-4: mode → experimentMode 필드명 변환함 (4 enum 값)', () => {
-    const modes = ['DUAL', 'SEQUENTIAL', 'BTI', 'DUAL_2PC'] as const;
+  it('M-4: mode → experimentMode 필드명 변환함 (2 enum 값)', () => {
+    const modes = ['BTI', 'DUAL_2PC'] as const;
     for (const mode of modes) {
       const aggregate = SessionAggregate.create({ ...baseParams, mode });
       const dto = aggregateToPairingResponseDto(aggregate);

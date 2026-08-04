@@ -26,13 +26,13 @@ describe('SessionAggregate', () => {
     subjectIndex: 1,
     pairingToken: 'TOK001',
     operatorId: 'operator-1',
-    mode: 'SEQUENTIAL' as const,
+    mode: 'DUAL_2PC' as const,
     expiresAt: new Date(TEST_NOW.getTime() + 60_000), // TEST_NOW 기준 1분 뒤 만료
     ...override,
   });
 
   describe('create()', () => {
-    test('1. happy path — SEQUENTIAL 모드 + 유효 인자 → 상태 CREATED', () => {
+    test('1. happy path — DUAL_2PC 모드 + 유효 인자 → 상태 CREATED', () => {
       const aggregate = SessionAggregate.create(baseParams());
       expect(aggregate.status).toBe('CREATED');
       expect(aggregate.id).toBe('session-id-1');
@@ -40,7 +40,7 @@ describe('SessionAggregate', () => {
       expect(aggregate.subjectIndex).toBe(1);
       expect(aggregate.pairingToken).toBe('TOK001');
       expect(aggregate.operatorId).toBe('operator-1');
-      expect(aggregate.mode).toBe('SEQUENTIAL');
+      expect(aggregate.mode).toBe('DUAL_2PC');
       expect(aggregate.userId).toBeNull();
       expect(aggregate.pairedAt).toBeNull();
     });
@@ -140,7 +140,7 @@ describe('SessionAggregate.fromDocument invariant', () => {
     subjectIndex: 1,
     pairingToken: 'ABC123',
     creatorId: null,
-    experimentMode: 'DUAL',
+    experimentMode: 'DUAL_2PC',
     expiresAt: new Date(Date.now() + 60_000),
     status: 'CREATED',
     userId: null,

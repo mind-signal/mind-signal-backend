@@ -426,7 +426,7 @@ export const startMeasurementService = async (
     return { kind: 'DUAL_2PC', groupId: session.groupId };
   }
 
-  // 4. subjectIndex guard (SEQUENTIAL/DUAL/BTI 경로만, Bug 3 guard)
+  // 4. subjectIndex guard (비-DUAL_2PC legacy 경로만, Bug 3 guard)
   if (session.subjectIndex === null || session.subjectIndex <= 0) {
     throw new AppError('세션에 유효한 subjectIndex가 없습니다.', 400);
   }
@@ -561,7 +561,7 @@ export const stopMeasurementService = async (
   };
 
   // v7 H-2: DUAL_2PC는 allCompleted일 때만 1회 emit + cleanup
-  // 기존 기존 SEQUENTIAL/DUAL/BTI 경로는 subject별 emit 유지 (v2 N-3 반영)
+  // 비-DUAL_2PC legacy 경로(BTI)는 subject별 emit 유지 (v2 N-3 반영)
   if (session.experimentMode === 'DUAL_2PC') {
     if (allCompleted) {
       // 두 subject 모두 COMPLETED일 때만 1회 emit
@@ -576,7 +576,7 @@ export const stopMeasurementService = async (
     }
     // 첫 subject stop 시점에는 emit 생략 (UI는 "partner 측정 중" 상태 유지)
   } else {
-    // 기존 SEQUENTIAL/DUAL/BTI 경로 유지 (subject별 emit 유지)
+    // 비-DUAL_2PC legacy 경로(BTI) 유지 (subject별 emit 유지)
     SocketService.emitLiveEvent('measurement-complete', {
       sessionId: session._id,
       ...payload,

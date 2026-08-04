@@ -8,7 +8,7 @@
  * 5/26 교수 면담 시연용 — 한국어 자연어 시나리오 3건을 직접 낭독.
  *
  * 시나리오 3건 (PLAN rev.3 §7.2 + AppError 코드 실측 정합):
- *   1. SEQUENTIAL 모드 첫 페어링 성공 — CREATED → PAIRED + SessionPairedEvent 발행
+ *   1. 첫 페어링 성공 — CREATED → PAIRED + SessionPairedEvent 발행
  *   2. 만료된 토큰 — AppError 401 throw
  *   3. 이미 사용된 토큰 (status PAIRED) — AppError 400 throw
  */
@@ -49,14 +49,14 @@ const makeInMemoryRepo = () => {
 };
 
 describe('Feature: 피실험자가 QR을 스캔해 세션에 합류함', () => {
-  describe('[TS-SESSION-03] Scenario: SEQUENTIAL 모드의 첫 페어링이 성공함', () => {
+  describe('[TS-SESSION-03] Scenario: 첫 페어링이 성공함', () => {
     test(
-      'Given operator alice가 SEQUENTIAL 모드 세션을 생성했고, ' +
+      'Given operator alice가 세션을 생성했고, ' +
         'When subject bob (userId)이 pairingToken으로 합류 요청을 보내면, ' +
         'Then 세션 상태가 CREATED 에서 PAIRED 로 전이하고 ' +
         'SessionPairedEvent (userId/groupId/subjectIndex/mode 포함)가 발행됨',
       async () => {
-        // Given — operator alice가 SEQUENTIAL 모드 세션을 생성함
+        // Given — operator alice가 세션을 생성함
         const repo = makeInMemoryRepo();
         const operatorId = new Types.ObjectId().toString();
         const session = SessionAggregate.create({
@@ -65,7 +65,7 @@ describe('Feature: 피실험자가 QR을 스캔해 세션에 합류함', () => {
           subjectIndex: 1,
           pairingToken: 'TOK001',
           operatorId,
-          mode: 'SEQUENTIAL',
+          mode: 'DUAL_2PC',
           expiresAt: new Date(TEST_NOW.getTime() + 60_000),
         });
         await repo.saveNew(session);
@@ -91,7 +91,7 @@ describe('Feature: 피실험자가 QR을 스캔해 세션에 합류함', () => {
         expect(result.event.userId).toBe(userId);
         expect(result.event.groupId).toBe('A1B2C3D4');
         expect(result.event.subjectIndex).toBe(1);
-        expect(result.event.mode).toBe('SEQUENTIAL');
+        expect(result.event.mode).toBe('DUAL_2PC');
         expect(typeof result.event.occurredAt).toBe('string');
 
         // drainRecordedEvents observable (tdd-spec §2.1 #6 정합 — codex review R2-1)
@@ -120,7 +120,7 @@ describe('Feature: 피실험자가 QR을 스캔해 세션에 합류함', () => {
           subjectIndex: 1,
           pairingToken: 'EXP001',
           operatorId,
-          mode: 'SEQUENTIAL',
+          mode: 'DUAL_2PC',
           expiresAt: new Date(TEST_NOW.getTime() - 1000), // TEST_NOW 기준 1초 전 만료
         });
         await repo.saveNew(expiredSession);
@@ -165,7 +165,7 @@ describe('Feature: 피실험자가 QR을 스캔해 세션에 합류함', () => {
           subjectIndex: 1,
           pairingToken: 'PRD001',
           operatorId,
-          mode: 'SEQUENTIAL',
+          mode: 'DUAL_2PC',
           expiresAt: new Date(TEST_NOW.getTime() + 60_000),
         });
         await repo.saveNew(session);
@@ -236,7 +236,7 @@ const makeStubRepoWithCreatedSession = async (params: {
     subjectIndex: 1,
     pairingToken: params.pairingToken,
     operatorId: new Types.ObjectId().toString(),
-    mode: 'SEQUENTIAL',
+    mode: 'DUAL_2PC',
     expiresAt: params.expiresAt,
   });
   await repo.saveNew(aggregate);
