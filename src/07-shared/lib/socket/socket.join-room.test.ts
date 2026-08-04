@@ -224,6 +224,12 @@ describe('SocketService 브로드캐스트 경계 (AUTH-W001)', () => {
   let httpServer: http.Server;
   let serverUrl: string;
 
+  // 이 describe 의 SocketService.init 도 mock 된 redisService 를 건드리므로
+  // 앞 describe 의 호출 이력을 물고 시작하지 않도록 초기화함
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   beforeAll(async () => {
     httpServer = http.createServer();
     SocketService.init(httpServer);
@@ -257,32 +263,68 @@ describe('SocketService 브로드캐스트 경계 (AUTH-W001)', () => {
     }
   });
 
-  it('room에 합류하지 않은 소켓은 emitToGroup 이벤트를 받지 않음', async () => {
-    const client: ClientSocket = ioClient(serverUrl, {
+  it('합류한 소켓만 emitToGroup 이벤트를 받음', async () => {
+    // 미수신만 확인하면 emitToGroup 이 아무에게도 안 보내거나 엉뚱한 room 을
+    // 골라도 통과함. 대상 room 의 정상 수신을 함께 봐야 판정이 성립함
+    const groupId = 'group-secret';
+    const payload = { data: { focus: 1 } };
+
+    const member: ClientSocket = ioClient(serverUrl, {
+      transports: ['websocket'],
+      forceNew: true,
+      reconnection: false,
+    });
+    const outsider: ClientSocket = ioClient(serverUrl, {
       transports: ['websocket'],
       forceNew: true,
       reconnection: false,
     });
 
     try {
+      await Promise.all(
+        [member, outsider].map(
+          (c) =>
+            new Promise<void>((resolve, reject) => {
+              c.once('connect', () => resolve());
+              c.once('connect_error', reject);
+            })
+        )
+      );
+
+      const token = jwt.sign({ id: 'user-123' }, 'test-secret-key', {
+        expiresIn: '30m',
+      });
       await new Promise<void>((resolve, reject) => {
-        client.once('connect', () => resolve());
-        client.once('connect_error', reject);
+        member
+          .timeout(2_000)
+          .emit(
+            'join-room',
+            { groupId, token },
+            (error: Error | null, ack: { ok: boolean }) => {
+              if (error || !ack.ok) {
+                reject(error ?? new Error('join 실패'));
+                return;
+              }
+              resolve();
+            }
+          );
       });
 
-      const received: unknown[] = [];
-      client.on('eeg-live', (data: unknown) => received.push(data));
+      const memberReceived: unknown[] = [];
+      const outsiderReceived: unknown[] = [];
+      member.on('eeg-live', (data: unknown) => memberReceived.push(data));
+      outsider.on('eeg-live', (data: unknown) => outsiderReceived.push(data));
 
-      SocketService.emitToGroup('group-secret', 'eeg-live', {
-        data: { focus: 1 },
-      });
+      SocketService.emitToGroup(groupId, 'eeg-live', payload);
 
-      // 소켓 왕복 시간을 준 뒤에도 도착분이 없어야 함
+      // 소켓 왕복 시간을 줌
       await new Promise((resolve) => setTimeout(resolve, 200));
 
-      expect(received).toEqual([]);
+      expect(memberReceived).toEqual([payload]);
+      expect(outsiderReceived).toEqual([]);
     } finally {
-      client.disconnect();
+      member.disconnect();
+      outsider.disconnect();
     }
   });
 });
