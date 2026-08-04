@@ -110,8 +110,15 @@ describe('measurement.service.ts — BE-3 SEQUENTIAL regression: Phase 14 경로
     expect(source).toContain('streamStart');
   });
 
-  it('SocketService.emitLiveEvent 호출이 기존 경로에 유지됨', () => {
-    expect(source).toContain('SocketService.emitLiveEvent');
+  it('SocketService 소켓 emit 호출이 기존 경로에 유지됨', () => {
+    // AUTH-W001 에서 전역 emitLiveEvent 를 그룹 room emitToGroup 으로 바꿨음.
+    // 보존 대상은 "소켓으로 알린다"이지 전역 브로드캐스트가 아님
+    expect(source).toContain('SocketService.emitToGroup');
+  });
+
+  it('전역 브로드캐스트 emitLiveEvent 가 이 서비스에 남아 있지 않음 (AUTH-W001)', () => {
+    // 되돌아오면 room 가입 없이 접속만 한 소켓에도 뇌파가 감
+    expect(source).not.toContain('SocketService.emitLiveEvent');
   });
 
   it('Redis subscriber.subscribe가 기존 경로에 유지됨', () => {
@@ -134,14 +141,17 @@ describe('measurement.service.ts — BE-3 SEQUENTIAL regression: Phase 14 경로
     expect(source).toContain('measuredAt');
   });
 
-  it('stopMeasurementService에 SEQUENTIAL/DUAL/BTI 경로 emitLiveEvent 유지됨 (v2 N-3 반영)', () => {
-    // SEQUENTIAL/DUAL/BTI는 subject별 emitLiveEvent, DUAL_2PC만 emitToGroup 사용
-    expect(source).toContain('SocketService.emitLiveEvent');
+  it('stopMeasurementService에 BTI 경로와 DUAL_2PC 경로 emit이 유지됨 (v2 N-3 반영)', () => {
+    // 원래는 BTI 가 subject 별 emitLiveEvent, DUAL_2PC 만 emitToGroup 이었음.
+    // AUTH-W001 에서 둘 다 emitToGroup 이 됐고 구분은 emit 횟수로 남음
+    // (BTI 는 subject 별 1회, DUAL_2PC 는 allCompleted 일 때 1회)
     expect(source).toContain('SocketService.emitToGroup');
   });
 
-  it("SEQUENTIAL 경로 stopMeasurement에서 'measurement-complete' 이벤트 emitLiveEvent로 emit됨", () => {
-    expect(source).toMatch(/emitLiveEvent\(['"]measurement-complete['"]/);
+  it("stopMeasurement에서 'measurement-complete' 이벤트가 그룹 room으로 emit됨", () => {
+    expect(source).toMatch(
+      /emitToGroup\([^,]+,\s*['"]measurement-complete['"]/
+    );
   });
 });
 

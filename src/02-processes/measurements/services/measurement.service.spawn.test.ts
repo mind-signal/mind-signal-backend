@@ -46,7 +46,8 @@ describe('measurement.service.ts: 엔진 프록시 방식 전환 검증', () => 
   });
 
   it('서비스가 Socket.io emit 로직을 유지함', () => {
-    expect(serviceSource).toContain('SocketService.emitLiveEvent');
+    // AUTH-W001 에서 전역 emitLiveEvent 를 그룹 room emitToGroup 으로 바꿨음
+    expect(serviceSource).toContain('SocketService.emitToGroup');
     expect(serviceSource).toContain('eeg-live');
   });
 

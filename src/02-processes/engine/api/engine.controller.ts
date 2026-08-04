@@ -77,7 +77,8 @@ async function triggerPostMeasurementByTier(groupId: string) {
 
   if (tier === 'ABORTED') {
     // 양쪽 모두 데이터 부족 — 분석 불가, Socket.io로 ABORTED 알림함
-    SocketService.emitLiveEvent('analysis-status', {
+    // 그룹 room 으로만 보냄. 전역 emit 이면 무관한 소켓도 받음 (AUTH-W001)
+    SocketService.emitToGroup(groupId, 'analysis-status', {
       groupId,
       tier: 'ABORTED',
       message: '양쪽 모두 측정 데이터가 부족합니다. 재측정이 필요합니다.',
@@ -97,7 +98,7 @@ async function triggerPostMeasurementByTier(groupId: string) {
     // 유효 판정을 받은 subject를 넘김. 1로 하드코딩하면 유효한 쪽이 subject 2일
     // 때 탈락한 데이터를 분석하려다 실패함(2026-07-31 실측)
     const validSubjectIndex = validSessions[0].subjectIndex as number;
-    SocketService.emitLiveEvent('analysis-status', {
+    SocketService.emitToGroup(groupId, 'analysis-status', {
       groupId,
       tier: 'PARTIAL',
       message: `한 명(subject ${validSubjectIndex})의 데이터로 BTI 개인 분석을 진행합니다.`,
@@ -132,7 +133,7 @@ function notifyPipelineFailure(
   console.error(
     `[postMeasurement] groupId=${groupId} ${pipeline} 파이프라인 실패: ${reason}`
   );
-  SocketService.emitLiveEvent('analysis-status', {
+  SocketService.emitToGroup(groupId, 'analysis-status', {
     groupId,
     tier: 'ABORTED',
     message: `분석에 실패했습니다. 재측정이 필요합니다. (${pipeline} 파이프라인 오류)`,
