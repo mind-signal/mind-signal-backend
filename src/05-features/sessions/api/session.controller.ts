@@ -5,6 +5,7 @@ import {
 } from '@05-features/sessions/services/pairing.service';
 import { submitConsentProcess } from '@05-features/sessions/services/submit-consent.service';
 import { createOperatorInviteToken } from '@05-features/sessions/services/invite-operator.service';
+import { assertGroupOwnership } from '@05-features/sessions/services/group-ownership.service';
 import { joinAsOperator } from '@05-features/sessions/services/join-operator.service';
 import { adminPairDeviceProcess } from '@05-features/sessions/services/admin-pair.service';
 import { AppError } from '@07-shared/errors';
@@ -199,6 +200,14 @@ export const createOperatorInviteHandler = async (
 ) => {
   try {
     const { groupId } = req.params;
+
+    // 이 핸들러는 조회가 아니라 세션을 updateMany 로 변조한 뒤 invite 토큰을
+    // 발급함. 그 토큰이 무인증 join-as-operator 를 거쳐 운영자 권한이 되므로,
+    // 소유권을 확인하지 않으면 아무 계정이나 남의 실험 운영자가 됨 (AUTH-W002)
+    if (!req.user?.id) {
+      throw new AppError('인증이 필요합니다.', 401);
+    }
+    await assertGroupOwnership(groupId, req.user.id);
 
     const result = await createOperatorInviteToken(groupId);
 
