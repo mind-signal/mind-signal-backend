@@ -9,7 +9,7 @@ export const createSessionSchema = z
       .string()
       .regex(/^[0-9a-fA-F]{24}$/, 'groupId는 24자리 HEX ObjectId여야 합니다.')
       .optional(),
-    // 실험 모드 — 미제공 시 BE 스키마 default(DUAL) 적용함 (DUAL_2PC 생성 경로 지원)
+    // 실험 모드 — 미제공 시 BE 스키마 default(DUAL_2PC) 적용함
     experimentMode: z.enum(['BTI', 'DUAL_2PC']).optional(),
   })
   .default({});

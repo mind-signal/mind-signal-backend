@@ -20,7 +20,7 @@ export interface Session {
   measuredAt: Date | null; // 측정 시작 시점
   stopReason: 'Natural' | 'ManualEarly' | 'HeadsetLost' | 'ProcessError' | null;
   measuredDurationSeconds: number | null;
-  experimentMode: ExperimentMode; // 실험 모드 (DUAL | SEQUENTIAL | BTI | DUAL_2PC)
+  experimentMode: ExperimentMode; // 실험 모드 (BTI | DUAL_2PC)
 }
 
 /** 2. 인스턴스 메서드 타입 정의 */

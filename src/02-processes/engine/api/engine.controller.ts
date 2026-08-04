@@ -17,7 +17,6 @@ const MIN_ANALYSIS_SECONDS = 180;
 
 /**
  * 3-tier 분류 후 적절한 분석 파이프라인 트리거함
- * - SEQUENTIAL: 자동 트리거 안 함. operator "Analyze" 버튼(POST /api/analyze/sequential) 대기함
  * - VALID: measuredDurationSeconds >= MIN_ANALYSIS_SECONDS
  * - PARTIAL: 한쪽만 VALID
  * - ABORTED: 둘 다 INVALID

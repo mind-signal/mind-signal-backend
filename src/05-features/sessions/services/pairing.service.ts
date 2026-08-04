@@ -27,7 +27,7 @@ export function addPairingCompleteListener(cb: PairingCallback): void {
  * $inc 원자적 연산으로 동시 요청 시에도 고유한 subjectIndex 보장함
  * @param groupId 기존 그룹에 추가할 경우 제공하며, 없을 경우 신규 생성함
  * @param creatorId 세션 생성자(운영자) ID — 제공 시 바인딩함
- * @param experimentMode 실험 모드 — 미제공 시 스키마 default(DUAL) 적용함
+ * @param experimentMode 실험 모드 — 미제공 시 스키마 default(DUAL_2PC) 적용함
  */
 export const createGroupSessionProcess = async (
   groupId?: string,
@@ -65,7 +65,7 @@ export const createGroupSessionProcess = async (
     status: 'CREATED',
     expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5분 유효함
     ...(creatorId ? { creatorId: new Types.ObjectId(creatorId) } : {}),
-    // experimentMode 제공 시 명시 저장, 미제공 시 스키마 default(DUAL) 적용함
+    // experimentMode 제공 시 명시 저장, 미제공 시 스키마 default(DUAL_2PC) 적용함
     ...(experimentMode ? { experimentMode } : {}),
   });
 
