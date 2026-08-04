@@ -43,74 +43,43 @@ describe('engine.routes.ts: analyzePipelineSchema 확장 검증', () => {
 });
 
 describe('engine.routes.ts: analyzePipelineSchema Zod 런타임 검증', () => {
-  let analyzePipelineSchema: import('zod').ZodTypeAny | undefined;
+  // 운영 스키마를 그대로 가져와 검증함. 예전에는 같은 모양을 복제해 썼는데
+  // 그러면 운영 코드가 SEQUENTIAL 을 다시 허용해도 이 테스트가 통과함
+  const { analyzePipelineSchema } = require('./engine.routes');
 
-  beforeAll(() => {
-    const filePath = path.resolve(__dirname, 'engine.routes.ts');
-    const hasFile = fs.existsSync(filePath);
-    if (!hasFile) return;
+  const base = { groupId: 'grp_test', subjectIndices: [1, 2] };
 
-    // 소스에서 z.object 형식으로 정의된 스키마를 직접 파싱하기 위해 zod 활용함
-    // engine.routes.ts는 Router를 export하므로 직접 import 불가
-    // zod를 통해 독립적으로 스키마 생성하여 검증함
-    const { z } = require('zod');
-    analyzePipelineSchema = z.object({
-      groupId: z.string().min(1),
-      subjectIndices: z.array(z.number().int().positive()),
-      mode: z.enum(['DUAL', 'BTI']).optional().default('DUAL'),
-      algorithm: z.string().optional().default('default'),
-    });
+  it("mode: 'DUAL' 이 스키마 검증을 통과함", () => {
+    expect(
+      analyzePipelineSchema.safeParse({ ...base, mode: 'DUAL' }).success
+    ).toBe(true);
   });
 
-  it("mode: 'BTI'가 스키마 검증을 통과함", () => {
-    if (!analyzePipelineSchema) return;
-    const result = analyzePipelineSchema.safeParse({
-      groupId: 'grp_test',
-      subjectIndices: [1, 2],
-      mode: 'BTI',
-    });
-    expect(result.success).toBe(true);
+  it("mode: 'BTI' 가 스키마 검증을 통과함", () => {
+    expect(
+      analyzePipelineSchema.safeParse({ ...base, mode: 'BTI' }).success
+    ).toBe(true);
   });
 
-  it("mode: 'DUAL'이 스키마 검증을 통과함", () => {
-    if (!analyzePipelineSchema) return;
-    const result = analyzePipelineSchema.safeParse({
-      groupId: 'grp_test',
-      subjectIndices: [1, 2],
-      mode: 'DUAL',
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("mode: 'BTI'가 스키마 검증을 통과함", () => {
-    if (!analyzePipelineSchema) return;
-    const result = analyzePipelineSchema.safeParse({
-      groupId: 'grp_test',
-      subjectIndices: [1, 2],
-      mode: 'BTI',
-    });
-    expect(result.success).toBe(true);
+  it("제거된 mode: 'SEQUENTIAL' 이 스키마 검증에 실패함", () => {
+    // SESSION-W002 가 지운 값이 런타임에서도 거부되는지 확인함.
+    // 이 PR 의 핵심 주장을 지키는 단언임
+    expect(
+      analyzePipelineSchema.safeParse({ ...base, mode: 'SEQUENTIAL' }).success
+    ).toBe(false);
   });
 
   it("mode: 'INVALID' 시 스키마 검증 실패함", () => {
-    if (!analyzePipelineSchema) return;
-    const result = analyzePipelineSchema.safeParse({
-      groupId: 'grp_test',
-      subjectIndices: [1, 2],
-      mode: 'INVALID',
-    });
-    expect(result.success).toBe(false);
+    expect(
+      analyzePipelineSchema.safeParse({ ...base, mode: 'INVALID' }).success
+    ).toBe(false);
   });
 
-  it('mode 미지정 시 default DUAL이 적용됨', () => {
-    if (!analyzePipelineSchema) return;
-    const result = analyzePipelineSchema.safeParse({
-      groupId: 'grp_test',
-      subjectIndices: [1, 2],
-    });
+  it('mode 미지정 시 default DUAL 이 적용됨', () => {
+    const result = analyzePipelineSchema.safeParse(base);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect((result.data as any).mode).toBe('DUAL');
+      expect(result.data.mode).toBe('DUAL');
     }
   });
 });

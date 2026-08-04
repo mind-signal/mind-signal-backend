@@ -101,42 +101,50 @@ describe('session.schema.ts — BE-6: toJSON fallback 정적 검증', () => {
 // ============================================================
 
 describe('session.schema.ts — BE-6: toJSON fallback 런타임 동작', () => {
+  // toJSON 이 다루는 문서 모양임. Record<string, unknown> 으로 두면 ??= 에
+  // 타입 단언이 필요해져 테스트에서 타입 검사가 꺼짐
+  type LegacySessionJson = {
+    _id: string;
+    groupId: string;
+    experimentMode?: string | null;
+  };
+
   it('experimentMode가 undefined인 객체에 fallback 적용 시 DUAL_2PC 반환함', () => {
     // toJSON 내부 로직을 직접 시뮬레이션
     // obj.experimentMode ??= 'DUAL_2PC' 동작 검증
-    const obj: Record<string, unknown> = {
+    const obj: LegacySessionJson = {
       _id: 'some-id',
       groupId: 'grp-001',
       // experimentMode 필드 없음 (레거시 문서)
     };
 
     // ??= 연산자 동작 시뮬레이션
-    (obj as any).experimentMode ??= 'DUAL_2PC';
+    obj.experimentMode ??= 'DUAL_2PC';
 
     expect(obj.experimentMode).toBe('DUAL_2PC');
   });
 
   it('experimentMode가 이미 설정된 경우 fallback이 덮어쓰지 않음', () => {
-    const obj: Record<string, unknown> = {
+    const obj: LegacySessionJson = {
       _id: 'some-id',
       groupId: 'grp-001',
       experimentMode: 'DUAL_2PC',
     };
 
     // ??= 연산자는 nullish일 때만 할당 — 이미 값이 있으면 무시함
-    (obj as any).experimentMode ??= 'DUAL_2PC';
+    obj.experimentMode ??= 'DUAL_2PC';
 
     expect(obj.experimentMode).toBe('DUAL_2PC');
   });
 
   it('experimentMode가 null인 경우 DUAL_2PC fallback 적용됨', () => {
-    const obj: Record<string, unknown> = {
+    const obj: LegacySessionJson = {
       _id: 'some-id',
       groupId: 'grp-001',
       experimentMode: null,
     };
 
-    (obj as any).experimentMode ??= 'DUAL_2PC';
+    obj.experimentMode ??= 'DUAL_2PC';
 
     expect(obj.experimentMode).toBe('DUAL_2PC');
   });
