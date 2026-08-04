@@ -19,10 +19,13 @@ jest.mock('@06-entities/sessions', () => ({
 }));
 
 import {
+  assertGroupCreator,
   assertGroupOwnership,
   assertSessionOwnership,
 } from './group-ownership.service';
 import { AppError } from '@07-shared/errors';
+
+const VALID_OBJECT_ID = '65c9f0b2a1b2c3d4e5f67890';
 
 /** Session.find 결과를 지정함 */
 function mockSessions(docs: unknown[]) {
@@ -102,6 +105,42 @@ describe('assertGroupOwnership (AUTH-W002)', () => {
   });
 });
 
+describe('assertGroupCreator (AUTH-W002)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('세션을 만든 운영자는 통과함', async () => {
+    mockSessions([{ userId: 'user-1', creatorId: 'operator-9' }]);
+
+    await expect(
+      assertGroupCreator('group-abc', 'operator-9')
+    ).resolves.toBeUndefined();
+  });
+
+  it('참여자는 403으로 거부함 (운영자 승격 차단)', async () => {
+    // assertGroupOwnership 은 통과시키는 사용자임. 권한을 넘겨주는 동작에는
+    // 그보다 좁은 판정이 필요함 — 참여자가 운영자 초대 JWT 를 받아내면
+    // 무인증 join-as-operator 를 거쳐 스스로 운영자가 됨
+    mockSessions([{ userId: 'user-1', creatorId: 'operator-9' }]);
+
+    await expect(
+      assertGroupOwnership('group-abc', 'user-1')
+    ).resolves.toBeUndefined();
+    await expect(
+      assertGroupCreator('group-abc', 'user-1')
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it('존재하지 않는 그룹은 404로 거부함', async () => {
+    mockSessions([]);
+
+    await expect(
+      assertGroupCreator('group-nope', 'operator-9')
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
 describe('assertSessionOwnership (AUTH-W002)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -112,7 +151,7 @@ describe('assertSessionOwnership (AUTH-W002)', () => {
     mockSessions([{ userId: 'user-1', creatorId: 'operator-9' }]);
 
     await expect(
-      assertSessionOwnership('session-1', 'user-1')
+      assertSessionOwnership(VALID_OBJECT_ID, 'user-1')
     ).resolves.toBeUndefined();
   });
 
@@ -121,7 +160,7 @@ describe('assertSessionOwnership (AUTH-W002)', () => {
     mockSessions([{ userId: 'user-1', creatorId: 'operator-9' }]);
 
     await expect(
-      assertSessionOwnership('session-1', 'attacker-7')
+      assertSessionOwnership(VALID_OBJECT_ID, 'attacker-7')
     ).rejects.toMatchObject({ statusCode: 403 });
   });
 
@@ -129,7 +168,15 @@ describe('assertSessionOwnership (AUTH-W002)', () => {
     mockSessionById(null);
 
     await expect(
-      assertSessionOwnership('session-nope', 'user-1')
+      assertSessionOwnership(VALID_OBJECT_ID, 'user-1')
     ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('ObjectId 형식이 아니면 400으로 거부하고 조회하지 않음', async () => {
+    // 그냥 findById 에 넘기면 Mongoose CastError 로 500 이 남
+    await expect(
+      assertSessionOwnership('not-an-object-id', 'user-1')
+    ).rejects.toMatchObject({ statusCode: 400 });
+    expect(mockFindById).not.toHaveBeenCalled();
   });
 });

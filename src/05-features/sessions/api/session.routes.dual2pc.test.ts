@@ -181,6 +181,26 @@ describe('[TS-SESSION-16] POST /api/sessions/:groupId/invite-operator (BE-1-invi
     // 거부가 변조보다 먼저 일어나야 함
     expect(mockSession.updateMany as jest.Mock).not.toHaveBeenCalled();
   });
+
+  it('참여자(피실험자)도 403 반환함 — 운영자 승격 차단 (CodeRabbit PR #85)', async () => {
+    // 요청자가 그 그룹의 참여자로 등록된 상태임. 참여자를 통과시키면
+    // 피실험자가 스스로 운영자 초대 JWT 를 받아 운영자로 승격됨
+    (mockSession.find as jest.Mock).mockResolvedValue([
+      {
+        groupId: 'grp-001',
+        creatorId: 'someone-else',
+        userId: 'mock-operator-id',
+      },
+    ]);
+    (mockSession.updateMany as jest.Mock).mockClear();
+
+    const res = await request(app)
+      .post('/api/sessions/grp-001/invite-operator')
+      .set('Authorization', 'Bearer mock-user-token');
+
+    expect(res.status).toBe(403);
+    expect(mockSession.updateMany as jest.Mock).not.toHaveBeenCalled();
+  });
 });
 
 describe('[TS-SESSION-16][TS-SESSION-17] POST /api/sessions/join-as-operator (BE-1-join)', () => {

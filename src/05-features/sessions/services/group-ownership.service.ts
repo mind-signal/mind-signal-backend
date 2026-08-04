@@ -1,3 +1,4 @@
+import { Types } from 'mongoose';
 import { Session } from '@06-entities/sessions';
 import { AppError } from '@07-shared/errors';
 
@@ -39,6 +40,38 @@ export const assertGroupOwnership = async (
 };
 
 /**
+ * 요청자가 해당 그룹을 만든 운영자인지 확인함 (AUTH-W002).
+ *
+ * `assertGroupOwnership` 보다 좁음. 참여자(피실험자)는 통과하지 못함.
+ *
+ * 운영자 초대처럼 **권한을 넘겨주는 동작**에 쓺. 참여자에게 허용하면 피실험자가
+ * 스스로 운영자 초대 JWT 를 받아낼 수 있고, 그 토큰은 무인증
+ * `join-as-operator` 에서 운영자 소켓 토큰으로 교환되므로 피실험자가 운영자로
+ * 승격됨 (CodeRabbit PR #85).
+ *
+ * @param groupId - 측정 그룹 식별자임
+ * @param userId - 요청자 사용자 식별자임
+ * @throws AppError 404 - 해당 groupId 의 세션이 하나도 없을 때
+ * @throws AppError 403 - 그룹을 만든 운영자가 아닐 때
+ */
+export const assertGroupCreator = async (
+  groupId: string,
+  userId: string
+): Promise<void> => {
+  const sessions = await Session.find({ groupId });
+
+  if (sessions.length === 0) {
+    throw new AppError('해당 그룹을 찾을 수 없습니다.', 404);
+  }
+
+  const isCreator = sessions.some((s) => s.creatorId?.toString() === userId);
+
+  if (!isCreator) {
+    throw new AppError('해당 그룹의 운영자만 수행할 수 있습니다.', 403);
+  }
+};
+
+/**
  * 세션 식별자로 소유권을 확인함 (AUTH-W002).
  *
  * 측정 라우트 일부가 groupId 가 아니라 sessionId 를 받으므로 그 세션의 groupId 를
@@ -47,6 +80,7 @@ export const assertGroupOwnership = async (
  *
  * @param sessionId - 세션 식별자임
  * @param userId - 요청자 사용자 식별자임
+ * @throws AppError 400 - sessionId 가 ObjectId 형식이 아닐 때
  * @throws AppError 404 - 세션이 없을 때
  * @throws AppError 403 - 참여자도 생성자도 아닐 때
  */
@@ -54,6 +88,13 @@ export const assertSessionOwnership = async (
   sessionId: string,
   userId: string
 ): Promise<void> => {
+  // 형식을 먼저 봄. 그냥 findById 에 넘기면 Mongoose 가 CastError 를 던져
+  // 400 이어야 할 잘못된 입력이 500 으로 나감 (CodeRabbit PR #85).
+  // 라우트에 validateParams 가 걸려 있어도 가드 자체가 방어해야 함
+  if (!Types.ObjectId.isValid(sessionId)) {
+    throw new AppError('세션 식별자 형식이 올바르지 않습니다.', 400);
+  }
+
   const session = await Session.findById(sessionId);
 
   if (!session) {

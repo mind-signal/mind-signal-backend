@@ -32,13 +32,22 @@ jest.mock('@02-processes/measurements/services/measurement.service', () => ({
   stopMeasurementService: jest.fn().mockResolvedValue({ allCompleted: false }),
 }));
 
+// stopAll 은 MEASURING 세션을 직접 조회하므로 모델도 mock 함
+jest.mock('@06-entities/sessions', () => ({
+  Session: {
+    find: jest
+      .fn()
+      .mockResolvedValue([{ subjectIndex: 1, status: 'MEASURING' }]),
+  },
+}));
+
 jest.mock('@07-shared/middlewares/authenticate.middleware', () => ({
   authenticate: (
-    req: express.Request,
+    req: import('@07-shared/types').AuthedRequest,
     _res: express.Response,
     next: express.NextFunction
   ) => {
-    (req as any).user = { id: 'requester-1' };
+    req.user = { id: 'requester-1' };
     next();
   },
 }));
@@ -93,13 +102,48 @@ describe('engine 라우트 groupId 소유권 검증 (AUTH-W002)', () => {
       });
   });
 
-  it('stream/stop-all — 무관한 사용자는 403임 (한 호출로 그룹 전체를 끝내는 경로)', () => {
+  it('stream/stop — 소유권이 통과하면 엔진 종료와 세션 전이가 일어남', () => {
+    return request(app)
+      .post('/api/engine/stream/stop')
+      .send({ groupId: VALID_GROUP_ID, subjectIndex: 1 })
+      .expect(200)
+      .then(() => {
+        expect(assertGroupOwnership).toHaveBeenCalledWith(
+          VALID_GROUP_ID,
+          'requester-1'
+        );
+        expect(engineProxyService.streamStop).toHaveBeenCalledWith(
+          VALID_GROUP_ID,
+          1
+        );
+        expect(stopMeasurementService).toHaveBeenCalled();
+      });
+  });
+
+  it('stream/stop-all — 무관한 사용자는 403이고 종료가 일어나지 않음 (한 호출로 그룹 전체를 끝내는 경로)', () => {
     denyOwnership();
 
     return request(app)
       .post('/api/engine/stream/stop-all')
       .send({ groupId: VALID_GROUP_ID })
-      .expect(403);
+      .expect(403)
+      .then(() => {
+        expect(engineProxyService.streamStop).not.toHaveBeenCalled();
+        expect(stopMeasurementService).not.toHaveBeenCalled();
+      });
+  });
+
+  it('stream/stop-all — 소유권이 통과하면 200을 반환함', () => {
+    return request(app)
+      .post('/api/engine/stream/stop-all')
+      .send({ groupId: VALID_GROUP_ID })
+      .expect(200)
+      .then(() => {
+        expect(assertGroupOwnership).toHaveBeenCalledWith(
+          VALID_GROUP_ID,
+          'requester-1'
+        );
+      });
   });
 
   it('stream/start — 무관한 사용자는 403이고 엔진을 부르지 않음', () => {
@@ -111,6 +155,19 @@ describe('engine 라우트 groupId 소유권 검증 (AUTH-W002)', () => {
       .expect(403)
       .then(() => {
         expect(engineProxyService.streamStart).not.toHaveBeenCalled();
+      });
+  });
+
+  it('stream/start — 소유권이 통과하면 엔진에 그대로 전달함', () => {
+    return request(app)
+      .post('/api/engine/stream/start')
+      .send({ groupId: VALID_GROUP_ID, subjectIndex: 2 })
+      .expect(200)
+      .then(() => {
+        expect(engineProxyService.streamStart).toHaveBeenCalledWith(
+          VALID_GROUP_ID,
+          2
+        );
       });
   });
 
@@ -130,17 +187,23 @@ describe('engine 라우트 groupId 소유권 검증 (AUTH-W002)', () => {
       });
   });
 
-  it('소유권이 통과하면 기존 동작이 유지됨', () => {
+  it('analyze/pipeline — 소유권이 통과하면 인자를 그대로 넘김', () => {
     return request(app)
-      .post('/api/engine/stream/stop')
-      .send({ groupId: VALID_GROUP_ID, subjectIndex: 1 })
+      .post('/api/engine/analyze/pipeline')
+      .send({
+        groupId: VALID_GROUP_ID,
+        subjectIndices: [1, 2],
+        includeMarkdown: true,
+      })
       .expect(200)
       .then(() => {
-        expect(assertGroupOwnership).toHaveBeenCalledWith(
+        expect(engineProxyService.analyzePipeline).toHaveBeenCalledWith(
           VALID_GROUP_ID,
-          'requester-1'
+          [1, 2],
+          undefined,
+          undefined,
+          true
         );
-        expect(engineProxyService.streamStop).toHaveBeenCalled();
       });
   });
 });
