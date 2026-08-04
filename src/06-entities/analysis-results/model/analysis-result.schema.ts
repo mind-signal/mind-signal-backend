@@ -64,9 +64,13 @@ const analysisResultSchema = new Schema<
     markdown: { type: String, default: '' },
     pipelineResult: { type: Schema.Types.Mixed, default: {} },
     // 이 enum 은 experimentMode 와 별개 축임. SESSION-W002 에서 experimentMode
-    // 의 DUAL 과 SEQUENTIAL 을 제거해도 여기는 좁히지 않음 — 과거 분석 결과
-    // 문서가 그 값으로 저장돼 있어 좁히면 읽은 뒤 저장에서 깨짐. SEQUENTIAL 은
-    // legacy value 로 남기고 신규 쓰기만 금지함
+    // 의 DUAL 과 SEQUENTIAL 을 제거해도 여기는 좁히지 않음.
+    // 근거 정정(2026-08-04): 프로덕션 실측 결과 analysis_mode 가 SEQUENTIAL 인
+    // 문서는 0건임(analysisResults 5건 중 DUAL 3, 나머지는 필드 없음). 즉
+    // "과거 문서가 그 값으로 저장돼 있어서" 가 아님. 좁히지 않는 이유는 실측이
+    // 한 환경 한 시점 스냅샷이라 로컬과 팀원 환경과 덤프까지 전수 보장하지
+    // 못하고, SEQUENTIAL 을 쓰는 코드가 이미 소멸해 좁혀서 얻는 것이 없기
+    // 때문임. 축소 판단은 후속 작업(BE 에서 DE 로 mode 전달)에 위임함
     // eslint-disable-next-line camelcase
     analysis_mode: {
       type: String,
