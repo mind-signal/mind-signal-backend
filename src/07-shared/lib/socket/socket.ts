@@ -39,20 +39,52 @@ export class SocketService {
       console.log(`New client connected: ${socket.id}`);
 
       // 신규 — room join 핸들러 + ack 반환 (Phase 16 plan-review H-2 + v2 Medium 반영)
+      //
+      // 로그인 JWT를 요구함 (AUTH-W001). 이 room으로 aligned_pair(정렬된 원시 EEG)와
+      // stimulus_start와 measurement-complete가 나가므로, 무인증이면 groupId만 아는
+      // 누구나 타인의 측정 뇌파를 실시간으로 받음. groupId는 QR과 대시보드에서
+      // 평문으로 다루는 값이라 획득 난이도가 방어가 되지 못함.
+      //
+      // 검증 범위는 토큰 유효성까지임. "이 사용자가 그 그룹의 참여자인가"는
+      // AUTH-W002의 소유권 검증 계층에서 함께 넣음 — 계약을 두 번 바꾸지 않기 위함.
       socket.on(
         'join-room',
         (
-          groupId: string,
+          payload: { groupId?: string; token?: string } | string,
           ack?: (response: {
             ok: boolean;
             groupId?: string;
             error?: string;
           }) => void
         ) => {
+          const groupId =
+            typeof payload === 'string' ? payload : payload?.groupId;
+          const token =
+            typeof payload === 'string' ? undefined : payload?.token;
+
           if (typeof groupId !== 'string' || groupId.length === 0) {
             ack?.({ ok: false, error: 'invalid groupId' });
             return;
           }
+          if (!token) {
+            ack?.({ ok: false, error: 'unauthorized' });
+            return;
+          }
+          try {
+            const verifiedPayload = jwt.verify(token, config.jwtSecret.secret);
+            // 로그인 토큰만 통과시킴. 문자열 payload와 id 없는 토큰은 거부함
+            if (
+              typeof verifiedPayload === 'string' ||
+              typeof verifiedPayload.id !== 'string'
+            ) {
+              ack?.({ ok: false, error: 'unauthorized' });
+              return;
+            }
+          } catch {
+            ack?.({ ok: false, error: 'unauthorized' });
+            return;
+          }
+
           socket.join(groupId);
           console.log(`Socket ${socket.id} joined room ${groupId}`);
           ack?.({ ok: true, groupId });

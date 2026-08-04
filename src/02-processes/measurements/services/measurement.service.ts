@@ -459,7 +459,11 @@ export const startMeasurementService = async (
       // 전체 구조: { type, groupId, subjectIndex, waves, metrics, time }
       // 프론트엔드 EmotivMetrics 규격: { engagement, interest, excitement, stress, relaxation, focus }
       const data = parsed.metrics ?? parsed;
-      SocketService.emitLiveEvent('eeg-live', { sessionId: session._id, data });
+      // 그룹 room 으로만 보냄. 전역 emit 이면 접속만 한 소켓에도 뇌파가 감 (AUTH-W001)
+      SocketService.emitToGroup(session.groupId, 'eeg-live', {
+        sessionId: session._id,
+        data,
+      });
     } catch (err) {
       console.error('Redis JSON 파싱 에러:', err);
     }
@@ -478,7 +482,7 @@ export const startMeasurementService = async (
     console.error('EEG 스트리밍 시작 실패:', err);
     session.status = 'CANCELLED';
     await session.save();
-    SocketService.emitLiveEvent('measurement-complete', {
+    SocketService.emitToGroup(session.groupId, 'measurement-complete', {
       sessionId: session._id,
       status: session.status,
     });
@@ -577,7 +581,7 @@ export const stopMeasurementService = async (
     // 첫 subject stop 시점에는 emit 생략 (UI는 "partner 측정 중" 상태 유지)
   } else {
     // 비-DUAL_2PC legacy 경로(BTI) 유지 (subject별 emit 유지)
-    SocketService.emitLiveEvent('measurement-complete', {
+    SocketService.emitToGroup(session.groupId, 'measurement-complete', {
       sessionId: session._id,
       ...payload,
     });
