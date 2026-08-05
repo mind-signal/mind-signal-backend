@@ -58,7 +58,8 @@ A mismatch between local and CI steps is a bug — fix it immediately.
 
 CI does not connect to external infra (MongoDB, Redis). CI-targeted tests must be mocked.
 
-- Integration tests that need real DB/Redis run only locally, after `npm run infra:up` (Docker Redis).
+- Integration tests that need real Redis run only locally, after `npm run infra:up` (Docker Compose — Redis only).
+- Integration tests that need real MongoDB run only locally with a separate MongoDB connection and `MONGODB_URI` configured — `npm run infra:up` does not provide this.
 - Externally-dependent tests use the `it.skip` guard pattern — see `.agents/rules/test-modification.md`.
 
 ## Agent self-verification rules

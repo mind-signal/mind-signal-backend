@@ -8,7 +8,7 @@ Operator의 세션 생성 → Subject QR 페어링 → 실시간 EEG 스트리�
 
 ### 핵심 파이프라인
 
-```
+```text
 Emotiv 헤드셋 → Emotiv App → Python Data Engine (spawn)
               → Redis Pub/Sub → Backend SUBSCRIBE
               → Socket.io → Frontend 실시간 차트
@@ -117,7 +117,7 @@ npm run build
 
 ## 5. 프로젝트 구조
 
-```
+```text
 mind-signal-backend/
 ├── node_modules/           # Node.js 모듈
 │
@@ -221,10 +221,10 @@ Sessions: **QR 코드를 보여주기 위한 세션 생성/조회 기능만** 05
 
 - `main` (Production): 최종 배포 브랜치 — 직접 push 금지. `dev`에서만 PR 올림
 - `dev` (Staging): 개발 통합 브랜치 — 모든 `feat/*` 기능 브랜치의 PR 대상
-- `feat/{도메인-wNNN}-{작업명}`: 기능 브랜치 (Work ID 기반, §10 참조)
-- `fix/{도메인-wNNN}-{작업명}`: 버그 수정 브랜치
-- `docs/{도메인-wNNN}-{작업명}`: 문서 작업 브랜치
-- `refactor/{도메인-wNNN}-{작업명}`, `chore/{도메인-wNNN}-{작업명}`: 그 외 목적별 브랜치
+- `feat/{도메인-wNNN}-{작업명}`: 기능 브랜치 (Work ID 필수, §10 참조)
+- `fix/{작업명}`: 버그 수정 브랜치 (Work ID 불필요)
+- `docs/{작업명}`: 문서 작업 브랜치 (Work ID 불필요)
+- `refactor/{작업명}`, `chore/{작업명}`, `hotfix/{작업명}`: 그 외 목적별 브랜치 (Work ID 불필요)
 
 ### 작업 흐름 (모든 변경은 이슈 기반)
 
@@ -260,7 +260,7 @@ Sessions: **QR 코드를 보여주기 위한 세션 생성/조회 기능만** 05
 
 PR이 올라오면 아래 순서로 자동 검증됩니다.
 
-```
+```text
   PR 생성 / feat·fix·docs·refactor 브랜치 push
      ↓
 ┌─── CI 자동 검증 (6단계) ──────────────────────┐
@@ -298,13 +298,13 @@ npm run verify
 
 ### 형식
 
-```
+```text
 {type}({scope}): {description}
 ```
 
 예시:
 
-```
+```text
 feat(sessions): add pairing token-based session creation API
 fix(auth): handle JWT expiry in refresh flow
 refactor(measurement): extract engine proxy service
@@ -333,20 +333,23 @@ chore(deps): bump socket.io to 4.8.0
 
 ## 10. 브랜치 네이밍 컨벤션
 
-```
-{타입}/{도메인-wNNN}-{작업명}
+```text
+feat/{도메인-wNNN}-{작업명}                        # 기능 브랜치, Work ID 필수
+{fix|hotfix|refactor|docs|chore}/{작업명}          # 그 외 브랜치, Work ID 불필요
 ```
 
-Work ID(`{DOMAIN}-W{NNN}`, 예: `AUTH-W001`, `SESSION-W102`) 기반으로 브랜치를 만듭니다. Work ID 채번 규칙은 `AGENTS.md` §11 참조.
+`feat/*` 브랜치는 Work ID(`{DOMAIN}-W{NNN}`, 예: `AUTH-W001`, `SESSION-W102`) 기반으로 만듭니다. Work ID 채번 규칙은 `AGENTS.md` §11 참조. 나머지 타입(`fix`, `hotfix`, `refactor`, `docs`, `chore`)은 Work ID 없이 짧은 설명만 붙입니다.
 
 예시:
 
 - `feat/auth-w001-realtime-channel-auth`
-- `fix/session-w102-pairing-timeout`
-- `docs/docs-w010-agent-docs-restructure`
-- `refactor/engine-w005-proxy-extract`
+- `fix/measurement-complete-handler-cleanup`
+- `hotfix/session-pairing-timeout`
+- `docs/agent-docs-restructure`
+- `refactor/engine-proxy-extract`
+- `chore/bump-socket-io`
 
-추적 중인 Work ID가 없는 애드혹 작업은 id 부분을 생략합니다 (예: `fix/jwt-refresh-token-handling`). base branch는 항상 `dev`로 설정합니다.
+base branch는 항상 `dev`로 설정합니다.
 
 ---
 

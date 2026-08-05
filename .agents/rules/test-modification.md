@@ -32,7 +32,7 @@ For every code change, follow this sequence:
 
 When a snapshot test fails:
 
-```
+```text
 1. Read the failure diff carefully
 2. Ask: "Is this change intentional — did I deliberately change the output?"
    → YES: run `npm test -- -u`, then `git diff` the .snap files

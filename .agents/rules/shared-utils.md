@@ -9,13 +9,14 @@ import { redisService } from '@07-shared/lib/redis';
 import { SocketService } from '@07-shared/lib/socket';
 import { authenticate } from '@07-shared/middlewares/authenticate.middleware';
 import { validate } from '@07-shared/middlewares/validate.middleware';
-import { AuthedRequest } from '@07-shared/types/type';
+import type { AuthedRequest } from '@07-shared/types/type';
 import { createFakeSignUpData } from '@07-shared/lib/testing/user.test.factory';
 
 import { Session } from '@06-entities/sessions';
-import User from '@06-entities/users/model/user.schema';
 import { userRepository, UserDoc } from '@06-entities/users';
 
+// engine slice has no barrel index.ts yet, so deep import is currently the
+// only path — replace these examples once a barrel is added
 import engineRouter from '@02-processes/engine/api/engine.routes';
 import { engineRegistryService } from '@02-processes/engine/services/engine-registry.service';
 import { engineProxyService } from '@02-processes/engine/services/engine-proxy.service';

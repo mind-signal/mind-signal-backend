@@ -105,7 +105,7 @@ Use Google Style JSDoc for all exported functions and classes.
  */
 export async function getSessionsByUser(
   userId: string,
-  status?: SessionStatus,
+  status?: SessionStatus
 ): Promise<SessionDocument[]> { ... }
 ```
 

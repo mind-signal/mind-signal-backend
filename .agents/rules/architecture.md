@@ -2,7 +2,7 @@
 
 ## Directory layout
 
-```
+```text
 src/
 ├── 07-shared/       # infra — Redis, Socket.io, config, errors, common types
 │   ├── config/      # env parsing (config.ts is the single source of truth)
@@ -26,7 +26,7 @@ scripts/             # outside FSD — one-off meta tools (DB seeding etc.), exc
 
 ## Import direction
 
-```
+```text
 01-app → 02-processes → 05-features → 06-entities → 07-shared
 ```
 
@@ -50,6 +50,8 @@ Layer-crossing imports must use the alias, never a relative path:
 import { config } from '@07-shared/config/config';
 import { AppError } from '@07-shared/errors';
 import { Session } from '@06-entities/sessions';
+// engine slice has no barrel index.ts yet, so deep import is currently the
+// only path — replace this example once a barrel is added
 import { engineRegistryService } from '@02-processes/engine/services/engine-registry.service';
 
 // ❌ import { AppError } from '../../../07-shared/errors';
@@ -78,7 +80,7 @@ const baseUrl = config.dataEngine.baseUrl; // falls back to http://localhost:500
 
 ## Session state machine
 
-```
+```text
 CREATED → PAIRED → MEASURING → COMPLETED
    ↓          ↓         ↓
 EXPIRED   CANCELLED  CANCELLED
@@ -88,7 +90,7 @@ Pairing timeout 5 min (CREATED → EXPIRED), standard measurement 10 min, 10s of
 
 ## Redis channel key
 
-```
+```text
 mind-signal:{groupId}:subject:{subjectIndex}
 ```
 

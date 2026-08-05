@@ -4,13 +4,9 @@
 
 - `main` is protected — never commit directly.
 - Feature branches PR into `dev`; `dev` → `main` merges follow the team release cadence.
-- Naming (Work ID style — see `AGENTS.md` §11 for what a Work ID is):
-  - Feature: `feat/{domain-wNNN}-{slug}` — e.g. `feat/auth-w001-realtime-channel-auth`
-  - Fix: `fix/{domain-wNNN}-{slug}` — e.g. `fix/session-w102-pairing-timeout`
-  - Hotfix (production): `hotfix/{slug}`
-  - Refactor: `refactor/{domain-wNNN}-{slug}`
-  - Docs: `docs/{domain-wNNN}-{slug}`
-  - Ad-hoc work with no tracked Work ID: drop the id segment, e.g. `fix/session-pairing-timeout`.
+- Naming:
+  - Feature (Work ID required — see `AGENTS.md` §11 for what a Work ID is): `feat/{domain-wNNN}-{slug}` — e.g. `feat/auth-w001-realtime-channel-auth`
+  - Fix, hotfix, refactor, docs, chore (no Work ID, short slug): `fix/{slug}`, `hotfix/{slug}`, `refactor/{slug}`, `docs/{slug}`, `chore/{slug}` — e.g. `fix/measurement-complete-handler-cleanup`
 
 ## Commit convention — Conventional Commits 1.0
 
@@ -31,7 +27,7 @@ Pattern: `{type}({scope}): {description}`
 
 Scope: lowercase kebab-case (e.g. `auth`, `sessions`, `measurement`, `engine`). Description: starts lowercase, no trailing period.
 
-```
+```text
 feat(sessions): add pairing token-based session creation API
 fix(auth): handle JWT expiry in refresh flow
 refactor(measurement): extract engine proxy service
@@ -50,7 +46,7 @@ Flow: `feat/... → PR → dev → PR → main`. Force-pushing `main` is prohibi
 
 Every commit ends with:
 
-```
+```text
 Co-authored-by: KWONSEOK02 <gwonseok02@gmail.com>
 ```
 
@@ -94,6 +90,8 @@ Never commit if any step fails — fix the root cause, then recommit.
 ## CI trigger coverage
 
 `.github/workflows/ci.yml` triggers on push to `main`, `dev`, and `feat/**`/`fix/**`/`docs/**`/`refactor/**`, and on PRs into `main`/`dev`. A branch push already runs the full pipeline — you don't need to open a PR just to see CI results, but a PR is still required to merge.
+
+**Exception**: `hotfix/**` and `chore/**` are not in the `push.branches` list — pushing to those branches does not trigger CI. Open a PR into `dev`/`main` to get verification on this work.
 
 ## Merge strategy
 

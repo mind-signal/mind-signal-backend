@@ -14,12 +14,12 @@ one level up in `../docs/` — see `AGENTS.md` intro for that pointer.
 | **RTM** (Requirements Traceability Matrix) | FR ↔ impl ↔ test ↔ PR linkage | `docs/requirements/RTM.md` |
 | **ADR** (Architecture Decision Record) | Final, code-shaping tech decisions | `docs/architecture/decisions/ADR-NNN-<slug>.md` |
 | **RFC** (Request For Comments) | Design proposals needing team consensus | `docs/architecture/decisions/RFC-NNN-<slug>.md` |
-| **Report** | Spikes, benchmarks, API deep dives, PAAR post-mortems | `docs/reports/YYYY-MM-DD-<slug>.md` |
+| **Report** | Spikes, benchmarks, API deep dives, PAAR post-mortems | `docs/reports/{type}-YYYY-MM-DD-<slug>.md` |
 | **Overview** | C4 Level 1 system context | `docs/architecture/overview.md` |
 
 ## Decision Tree — "I want to write a new document"
 
-```
+```text
 Which best describes what you're about to write?
 
 ├─ A technical decision that is FINAL and will shape the code
@@ -53,7 +53,7 @@ Which best describes what you're about to write?
 
 ## ADR / RFC Lifecycle
 
-```
+```text
 Proposed  →  Accepted  →  Deprecated
     │            │              │
     └─ Rejected  └─ Superseded by ADR-NNN
@@ -86,7 +86,7 @@ Do not link cross-repo; copy and keep in sync manually.
 
 `docs/requirements/RTM.md` is a single table with one row per FR:
 
-```
+```text
 | FR-XX | Summary | Issue | ADR | Component | Test | Status |
 ```
 

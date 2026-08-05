@@ -42,7 +42,7 @@ Swagger(`/api-docs`)는 갱신되지 않음 — 실제 라우트 파일을 직�
 
 ## 4. 아키텍처 — FSD
 
-```
+```text
 src/
 ├── 07-shared/      인프라: Redis, Socket.io, config, errors, types, middlewares
 ├── 06-entities/    DB 스키마 & CRUD (Session/User/EegRecord/AnalysisResult)
@@ -82,12 +82,12 @@ Timestamp: 서버측 ingest timestamp가 단일 진실이고, client-local clock
 
 Conventional Commits: `{type}({scope}): {description}` — type은 `feat fix docs chore refactor test ci revert perf style`, scope는 소문자 kebab-case, description은 소문자 시작·마침표 없음.
 
-브랜치 네이밍(Work ID 스타일 — Work ID 정의는 §11 참조): `{type}/{domain-wNNN}-{slug}`, 예: `feat/auth-w001-realtime-channel-auth`, `fix/session-w102-pairing-timeout`, `docs/docs-w010-agent-docs-restructure`. `refactor/`, `chore/`도 동일 패턴.
+브랜치 네이밍: `feat/{domain-wNNN}-{slug}`는 Work ID 필수(정의는 §11 참조), 예: `feat/auth-w001-realtime-channel-auth`. `fix/`, `hotfix/`, `refactor/`, `docs/`, `chore/`는 Work ID 불필요 — 짧은 설명만 붙인다, 예: `fix/measurement-complete-handler-cleanup`.
 
 태스크 1개 = 커밋 1개. `main` 직접 커밋 금지 — `feat/... → PR → dev → PR → main`.
 
 모든 커밋은 마지막에 아래를 붙인다:
-```
+```text
 Co-authored-by: KWONSEOK02 <gwonseok02@gmail.com>
 ```
 이 주소 고정(`noreply` 금지), Claude `Co-Authored-By` 라인 금지. 클론당 최초 1회: `git config core.hooksPath .githooks` (pre-push gate 활성화).
