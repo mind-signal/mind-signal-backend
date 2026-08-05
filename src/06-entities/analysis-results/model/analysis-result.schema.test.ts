@@ -1,4 +1,3 @@
-/* eslint-disable camelcase */
 /**
  * analysis-result.schema.ts — analysis_mode + similarity_features 필드 검증
  *
@@ -7,6 +6,9 @@
  *   - similarity_features 필드가 Mixed 타입으로 정의됨
  *   - 기존 생성 경로(bti-analysis, post-measurement)에서 analysis_mode 미지정 시
  *     Mongoose default 'DUAL'이 적용됨 (정적 소스 검증)
+ *
+ * cosine_pearson_faa Zod 스키마 검증 블록은 SESSION-W002(2026-08-04)에서
+ * 스키마 파일과 함께 제거함. 그 스키마는 SEQUENTIAL 전용이었음
  */
 
 import * as fs from 'fs';
@@ -60,79 +62,5 @@ describe('analysis-result.schema.ts: analysis_mode 필드가 올바르게 추가
       /analysis_mode:[\s\S]*?default:\s*['"]DUAL['"]/
     );
     expect(hasOptionalInInterface || hasDefaultInSchema).toBeTruthy();
-  });
-});
-
-describe('cosine_pearson_faa.schema.ts: Zod 스키마 검증', () => {
-  let cosinePearsonFAASchema: ReturnType<typeof import('zod').z.object>;
-
-  beforeAll(() => {
-    const schemaPath = path.resolve(
-      __dirname,
-      '../../../07-shared/schemas/similarity/cosine_pearson_faa.schema.ts'
-    );
-    const hasFile = fs.existsSync(schemaPath);
-    expect(hasFile).toBe(true);
-    if (!hasFile) return;
-    ({
-      cosinePearsonFAASchema,
-    } = require('../../../07-shared/schemas/similarity/cosine_pearson_faa.schema'));
-  });
-
-  it('유효한 payload를 올바르게 파싱함', () => {
-    if (!cosinePearsonFAASchema) return;
-    const validPayload = {
-      algorithm: 'cosine_pearson_faa',
-      similarity_score: 0.73,
-      overall_cosine: 0.85,
-      band_ratio_diff: {
-        delta: 0.1,
-        theta: 0.2,
-        alpha: 0.05,
-        beta: 0.15,
-        gamma: 0.08,
-      },
-      faa_absolute_diff: 0.2,
-    };
-    const result = cosinePearsonFAASchema.safeParse(validPayload);
-    expect(result.success).toBe(true);
-  });
-
-  it('similarity_score가 범위 초과(1.5)면 파싱 실패함', () => {
-    if (!cosinePearsonFAASchema) return;
-    const invalidPayload = {
-      algorithm: 'cosine_pearson_faa',
-      similarity_score: 1.5,
-      overall_cosine: 0.85,
-      band_ratio_diff: {},
-      faa_absolute_diff: null,
-    };
-    const result = cosinePearsonFAASchema.safeParse(invalidPayload);
-    expect(result.success).toBe(false);
-  });
-
-  it('algorithm 필드 누락 시 파싱 실패함', () => {
-    if (!cosinePearsonFAASchema) return;
-    const invalidPayload = {
-      similarity_score: 0.5,
-      overall_cosine: 0.7,
-      band_ratio_diff: {},
-      faa_absolute_diff: null,
-    };
-    const result = cosinePearsonFAASchema.safeParse(invalidPayload);
-    expect(result.success).toBe(false);
-  });
-
-  it('faa_absolute_diff가 null이어도 파싱 성공함', () => {
-    if (!cosinePearsonFAASchema) return;
-    const payload = {
-      algorithm: 'cosine_pearson_faa',
-      similarity_score: 0.5,
-      overall_cosine: 0.6,
-      band_ratio_diff: { alpha: 0.1 },
-      faa_absolute_diff: null,
-    };
-    const result = cosinePearsonFAASchema.safeParse(payload);
-    expect(result.success).toBe(true);
   });
 });

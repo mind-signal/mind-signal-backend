@@ -111,14 +111,18 @@ function makeInviteToken(groupId: string, opts?: jwt.SignOptions): string {
   );
 }
 
-describe('POST /api/sessions/:groupId/invite-operator (BE-1-invite)', () => {
+describe('[TS-SESSION-16] POST /api/sessions/:groupId/invite-operator (BE-1-invite)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it('유효 groupId + 인증 → 201 + token + expiresAt 반환함', async () => {
+  it('유효 groupId + 인증 + 소유권 → 201 + token + expiresAt 반환함', async () => {
     // Arrange
-    (mockSession.find as jest.Mock).mockResolvedValue([{ groupId: 'grp-001' }]);
+    // creatorId 를 요청자와 맞춤. 소유권 검증이 붙어(AUTH-W002) 세션을 만든
+    // 운영자가 아니면 이 핸들러가 403 을 냄
+    (mockSession.find as jest.Mock).mockResolvedValue([
+      { groupId: 'grp-001', creatorId: 'mock-operator-id' },
+    ]);
     (mockSession.updateMany as jest.Mock).mockResolvedValue({
       modifiedCount: 1,
     });
@@ -159,9 +163,47 @@ describe('POST /api/sessions/:groupId/invite-operator (BE-1-invite)', () => {
     // Assert
     expect(res.status).toBe(401);
   });
+
+  it('그룹과 무관한 사용자 → 403 반환하고 세션을 변조하지 않음 (AUTH-W002)', async () => {
+    // 이 핸들러는 조회가 아니라 updateMany 로 세션을 바꾼 뒤 invite 토큰을 냄.
+    // 그 토큰이 무인증 join-as-operator 를 거쳐 운영자 권한이 되므로, 소유권을
+    // 확인하지 않으면 아무 계정이나 남의 실험 운영자가 됨
+    (mockSession.find as jest.Mock).mockResolvedValue([
+      { groupId: 'grp-001', creatorId: 'someone-else', userId: 'subject-1' },
+    ]);
+    (mockSession.updateMany as jest.Mock).mockClear();
+
+    const res = await request(app)
+      .post('/api/sessions/grp-001/invite-operator')
+      .set('Authorization', 'Bearer mock-user-token');
+
+    expect(res.status).toBe(403);
+    // 거부가 변조보다 먼저 일어나야 함
+    expect(mockSession.updateMany as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it('참여자(피실험자)도 403 반환함 — 운영자 승격 차단 (CodeRabbit PR #85)', async () => {
+    // 요청자가 그 그룹의 참여자로 등록된 상태임. 참여자를 통과시키면
+    // 피실험자가 스스로 운영자 초대 JWT 를 받아 운영자로 승격됨
+    (mockSession.find as jest.Mock).mockResolvedValue([
+      {
+        groupId: 'grp-001',
+        creatorId: 'someone-else',
+        userId: 'mock-operator-id',
+      },
+    ]);
+    (mockSession.updateMany as jest.Mock).mockClear();
+
+    const res = await request(app)
+      .post('/api/sessions/grp-001/invite-operator')
+      .set('Authorization', 'Bearer mock-user-token');
+
+    expect(res.status).toBe(403);
+    expect(mockSession.updateMany as jest.Mock).not.toHaveBeenCalled();
+  });
 });
 
-describe('POST /api/sessions/join-as-operator (BE-1-join)', () => {
+describe('[TS-SESSION-16][TS-SESSION-17] POST /api/sessions/join-as-operator (BE-1-join)', () => {
   let socketHttpServer: http.Server;
   let socketServerUrl: string;
 

@@ -18,6 +18,7 @@ import {
 import { authenticate, validateParams } from '@07-shared/middlewares';
 import measurementController from './measurement.controller';
 import * as measurementService from '@02-processes/measurements/services/measurement.service';
+import { assertGroupOwnership } from '@05-features/sessions';
 import { AppError } from '@07-shared/errors';
 
 // measurementService 모킹 — 외부 인프라(Redis, Python 엔진, MongoDB) 의존 제거
@@ -28,6 +29,14 @@ jest.mock('@02-processes/measurements/services/measurement.service', () => ({
   startDualMeasurementByGroup: jest
     .fn()
     .mockResolvedValue({ groupId: '65c9f0b2a1b2c3d4e5f67890' }),
+}));
+
+// 소유권 검증 모킹 — 이 스위트의 관심사는 라우트 배선과 파라미터 검증이고
+// 소유권 판정 자체는 group-ownership.service.test.ts 가 검증함 (AUTH-W002).
+// 모킹하지 않으면 DB 없는 환경에서 Session 조회가 걸림
+jest.mock('@05-features/sessions', () => ({
+  assertGroupOwnership: jest.fn().mockResolvedValue(undefined),
+  assertSessionOwnership: jest.fn().mockResolvedValue(undefined),
 }));
 
 // authenticate 모킹 — JWT 검증 없이 req.user 주입
@@ -143,7 +152,7 @@ describe('measurementGroupStartParamsSchema Zod 런타임 검증', () => {
   });
 });
 
-describe('POST /sessions/:sessionId/eeg/stream:start — validateParams 라우트 통합', () => {
+describe('[TS-EEG-01] POST /sessions/:sessionId/eeg/stream:start — validateParams 라우트 통합', () => {
   const app = buildMeasurementApp();
 
   it('유효한 ObjectId sessionId로 요청 시 200 반환함', async () => {
@@ -219,6 +228,22 @@ describe('POST /groups/:groupId/eeg/stream:start — DUAL_2PC 그룹 기반 측�
     );
     expect(res.status).toBe(400);
     // validateParams가 short-circuit하여 서비스 미호출 확인
+    expect(mockedStartDualMeasurementByGroup).not.toHaveBeenCalled();
+  });
+
+  it('소유권 검증이 거부하면 403 반환하고 측정을 시작하지 않음 (AUTH-W002)', async () => {
+    // 남의 groupId 로 엔진 프로세스를 spawn 시킬 수 없어야 함
+    jest
+      .mocked(assertGroupOwnership)
+      .mockRejectedValueOnce(
+        new AppError('해당 그룹에 대한 접근 권한이 없습니다.', 403)
+      );
+
+    const res = await request(app).post(
+      `/groups/${VALID_GROUP_ID}/eeg/stream:start`
+    );
+
+    expect(res.status).toBe(403);
     expect(mockedStartDualMeasurementByGroup).not.toHaveBeenCalled();
   });
 });

@@ -18,16 +18,13 @@ describe('experiment.ts: EXPERIMENT_MODES 상수가 올바르게 정의됨', () 
     source = fs.readFileSync(filePath, 'utf-8');
   });
 
-  it('EXPERIMENT_MODES에 DUAL 모드가 정의됨', () => {
-    expect(source).toContain("DUAL: 'DUAL'");
-  });
-
   it('EXPERIMENT_MODES에 BTI 모드가 정의됨', () => {
     expect(source).toContain("BTI: 'BTI'");
   });
 
-  it('EXPERIMENT_MODES에 SEQUENTIAL 모드가 정의됨', () => {
-    expect(source).toContain("SEQUENTIAL: 'SEQUENTIAL'");
+  it('DUAL 과 SEQUENTIAL 이 제거됨 (SESSION-W002)', () => {
+    expect(source).not.toContain("DUAL: 'DUAL'");
+    expect(source).not.toContain("SEQUENTIAL: 'SEQUENTIAL'");
   });
 
   it('ExperimentMode 타입이 keyof typeof 방식으로 자동 파생됨', () => {
@@ -59,12 +56,9 @@ describe('experiment.ts: EXPERIMENT_MODES 런타임 값 검증', () => {
     }
   });
 
-  it('EXPERIMENT_MODES.SEQUENTIAL 값이 문자열 SEQUENTIAL임', () => {
-    expect(EXPERIMENT_MODES['SEQUENTIAL']).toBe('SEQUENTIAL');
-  });
-
-  it('EXPERIMENT_MODES.DUAL 값이 문자열 DUAL임', () => {
-    expect(EXPERIMENT_MODES['DUAL']).toBe('DUAL');
+  it('DUAL 과 SEQUENTIAL 키가 런타임에 없음 (SESSION-W002)', () => {
+    expect('DUAL' in EXPERIMENT_MODES).toBe(false);
+    expect('SEQUENTIAL' in EXPERIMENT_MODES).toBe(false);
   });
 
   it('EXPERIMENT_MODES.BTI 값이 문자열 BTI임', () => {

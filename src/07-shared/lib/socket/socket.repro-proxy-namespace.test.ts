@@ -17,12 +17,17 @@
 
 import http from 'http';
 import { AddressInfo } from 'net';
+import jwt from 'jsonwebtoken';
 import { io as ioClient, Socket as ClientSocket } from 'socket.io-client';
 
 jest.mock('@07-shared/config/config', () => ({
   config: {
     dataEngine: {
       secretKey: 'test-engine-secret-abc123',
+    },
+    // join-room 이 로그인 토큰을 검증하므로 시크릿이 필요함 (AUTH-W001)
+    jwtSecret: {
+      secret: 'test-secret-key',
     },
   },
 }));
@@ -173,17 +178,24 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
     });
   });
 
-  it('Scenario E: 기본 namespace의 join-room은 변경 없이 정상 동작함', (done) => {
+  it('Scenario E: 기본 namespace의 join-room은 인증 후 정상 동작함', (done) => {
     const client: ClientSocket = ioClient(serverUrl, {
       transports: ['websocket'],
       forceNew: true,
       reconnection: false,
     });
 
+    // AUTH-W001 이후 로그인 토큰이 필요함. 이 시나리오가 확인하는 것은
+    // proxy namespace 추가가 기본 namespace 를 깨뜨리지 않는다는 것이므로
+    // 유효 토큰을 주고 정상 합류를 확인함
+    const token = jwt.sign({ id: 'user-123' }, 'test-secret-key', {
+      expiresIn: '30m',
+    });
+
     client.once('connect', () => {
       client.emit(
         'join-room',
-        'test-group-id',
+        { groupId: 'test-group-id', token },
         (ack: { ok: boolean; groupId?: string; error?: string }) => {
           try {
             expect(ack).toEqual({ ok: true, groupId: 'test-group-id' });

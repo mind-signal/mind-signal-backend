@@ -111,39 +111,6 @@ export const engineProxyService = {
     return toCamelCaseKeys(data) as Record<string, unknown>;
   },
 
-  /** SEQUENTIAL 모드 파이프라인 분석 요청을 파이썬 엔진으로 프록시함 */
-  async analyzeSequentialPipeline(
-    groupId: string,
-    algorithm: string = 'default'
-  ): Promise<Record<string, unknown>> {
-    const engineUrl = engineRegistryService.getEngineUrl();
-
-    const response = await fetch(`${engineUrl}/api/analyze/pipeline`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Engine-Secret': config.dataEngine.secretKey,
-      },
-      body: JSON.stringify({
-        ['group_id']: groupId,
-        ['subject_indices']: [1, 2], // DE Pydantic PipelineRequest 필수 필드 — SEQUENTIAL 브랜치는 값을 무시하지만 검증을 통과해야 함
-        ['mode']: 'SEQUENTIAL',
-        ['algorithm']: algorithm,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new AppError(
-        `파이썬 엔진 SEQUENTIAL 파이프라인 분석 실패: ${response.status} ${errorText}`,
-        response.status
-      );
-    }
-
-    const data = await response.json();
-    return toCamelCaseKeys(data) as Record<string, unknown>;
-  },
-
   /** 등록된 파이썬 엔진으로 EEG 스트리밍 시작 요청을 프록시함 */
   async streamStart(
     groupId: string,
@@ -224,7 +191,7 @@ export const engineProxyService = {
     groupId: string,
     subjectIndex: number
   ): Promise<Record<string, unknown>> {
-    // group 없으면 1PC/SEQUENTIAL legacy 폴백, group 있는데 slot 없으면 DUAL_2PC 미등록 — 503
+    // group 없으면 1PC legacy 폴백(BTI 가 사용), group 있는데 slot 없으면 DUAL_2PC 미등록 — 503
     const registrations = engineRegistryService.getByGroup(groupId);
     let engineUrl: string;
     if (!registrations) {

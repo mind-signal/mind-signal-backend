@@ -110,8 +110,18 @@ describe('measurement.service.ts — BE-3 SEQUENTIAL regression: Phase 14 경로
     expect(source).toContain('streamStart');
   });
 
-  it('SocketService.emitLiveEvent 호출이 기존 경로에 유지됨', () => {
-    expect(source).toContain('SocketService.emitLiveEvent');
+  it('eeg-live emit이 세션 그룹 room으로 유지됨', () => {
+    // AUTH-W001 에서 전역 emitLiveEvent 를 그룹 room emitToGroup 으로 바꿨음.
+    // 보존 대상은 "소켓으로 알린다"이지 전역 브로드캐스트가 아님.
+    // room 인자와 이벤트명을 묶어 확인함 (CodeRabbit PR #84)
+    expect(source).toMatch(
+      /SocketService\.emitToGroup\(\s*session\.groupId,\s*'eeg-live'/
+    );
+  });
+
+  it('전역 브로드캐스트 emitLiveEvent 가 이 서비스에 남아 있지 않음 (AUTH-W001)', () => {
+    // 되돌아오면 room 가입 없이 접속만 한 소켓에도 뇌파가 감
+    expect(source).not.toContain('SocketService.emitLiveEvent');
   });
 
   it('Redis subscriber.subscribe가 기존 경로에 유지됨', () => {
@@ -134,14 +144,24 @@ describe('measurement.service.ts — BE-3 SEQUENTIAL regression: Phase 14 경로
     expect(source).toContain('measuredAt');
   });
 
-  it('stopMeasurementService에 SEQUENTIAL/DUAL/BTI 경로 emitLiveEvent 유지됨 (v2 N-3 반영)', () => {
-    // SEQUENTIAL/DUAL/BTI는 subject별 emitLiveEvent, DUAL_2PC만 emitToGroup 사용
-    expect(source).toContain('SocketService.emitLiveEvent');
-    expect(source).toContain('SocketService.emitToGroup');
-  });
+  it('stopMeasurementService의 두 분기가 각각 measurement-complete를 그룹 room으로 emit함', () => {
+    // 원래는 BTI 가 subject 별 emitLiveEvent, DUAL_2PC 만 emitToGroup 이었음.
+    // AUTH-W001 에서 둘 다 emitToGroup 이 됐고 구분은 emit 시점으로 남음
+    // (BTI 는 subject 별 1회, DUAL_2PC 는 allCompleted 일 때 1회).
+    //
+    // 파일 전체 검색은 스트림 시작 실패 경로의 emit 에도 걸려 이 자리가 사라져도
+    // 통과함. stopMeasurementService 본문으로 범위를 좁혀 확인함 (CodeRabbit PR #84)
+    // JSDoc 의 언급이 아니라 선언 위치로 고정함
+    const stopFn = source.slice(
+      source.indexOf('export const stopMeasurementService')
+    );
+    const emits = stopFn.match(
+      /emitToGroup\(\s*session\.groupId,\s*'measurement-complete'/g
+    );
 
-  it("SEQUENTIAL 경로 stopMeasurement에서 'measurement-complete' 이벤트 emitLiveEvent로 emit됨", () => {
-    expect(source).toMatch(/emitLiveEvent\(['"]measurement-complete['"]/);
+    expect(emits).toHaveLength(2);
+    // DUAL_2PC 분기와 비-DUAL_2PC(BTI) 분기가 둘 다 살아 있어야 함
+    expect(stopFn).toContain("session.experimentMode === 'DUAL_2PC'");
   });
 });
 

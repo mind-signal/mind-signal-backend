@@ -522,7 +522,7 @@ describe('F1b — startup in-flight 그룹 supersede', () => {
   });
 });
 
-describe('startDualMeasurement 중복 트리거 차단 (in-flight 가드)', () => {
+describe('[TS-EEG-03] startDualMeasurement 중복 트리거 차단 (in-flight 가드)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     engineRegistryService.cleanupGroup(GROUP_ID);

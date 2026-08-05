@@ -45,9 +45,13 @@ describe('measurement.service.ts: 엔진 프록시 방식 전환 검증', () => 
     expect(serviceSource).toContain('mind-signal:');
   });
 
-  it('서비스가 Socket.io emit 로직을 유지함', () => {
-    expect(serviceSource).toContain('SocketService.emitLiveEvent');
-    expect(serviceSource).toContain('eeg-live');
+  it('서비스가 eeg-live를 세션 그룹 room으로 emit함', () => {
+    // AUTH-W001 에서 전역 emitLiveEvent 를 그룹 room emitToGroup 으로 바꿨음.
+    // emitter 와 room 인자와 이벤트명을 한 패턴으로 묶어 확인함 — 셋을 따로 찾으면
+    // 다른 호출부의 문자열에 걸려 이 자리가 사라져도 통과함 (CodeRabbit PR #84)
+    expect(serviceSource).toMatch(
+      /SocketService\.emitToGroup\(\s*session\.groupId,\s*'eeg-live'/
+    );
   });
 
   it('서비스가 스트림 시작 실패 시 세션을 CANCELLED로 롤백함', () => {

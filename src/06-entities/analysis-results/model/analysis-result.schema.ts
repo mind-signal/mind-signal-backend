@@ -13,7 +13,10 @@ export interface AnalysisResult {
   aiComment: string; // AI 분석 코멘트
   markdown: string; // 엔진 분석 markdown 원문
   pipelineResult: Record<string, unknown>; // analyzePipeline 전체 응답 저장
-  analysis_mode?: 'DUAL' | 'SEQUENTIAL' | 'BTI'; // 실험 모드 (ADR-14-002)
+  // 분석 파이프라인 이름표임. Session.experimentMode 와 다른 축이고 값도 다름.
+  // 여기 'DUAL' 은 experimentMode 의 DUAL 이 아니라 2인 대조 분석 파이프라인을
+  // 가리킴 — DUAL_2PC 측정 결과가 이 값으로 저장됨 (ADR-14-002)
+  analysis_mode?: 'DUAL' | 'SEQUENTIAL' | 'BTI';
   similarity_features?: Record<string, unknown>; // 유사도 지표 (ADR-14-009 Mixed type)
 }
 
@@ -60,6 +63,14 @@ const analysisResultSchema = new Schema<
     aiComment: { type: String, required: true },
     markdown: { type: String, default: '' },
     pipelineResult: { type: Schema.Types.Mixed, default: {} },
+    // 이 enum 은 experimentMode 와 별개 축임. SESSION-W002 에서 experimentMode
+    // 의 DUAL 과 SEQUENTIAL 을 제거해도 여기는 좁히지 않음.
+    // 근거 정정(2026-08-04): 프로덕션 실측 결과 analysis_mode 가 SEQUENTIAL 인
+    // 문서는 0건임(analysisResults 5건 중 DUAL 3, 나머지는 필드 없음). 즉
+    // "과거 문서가 그 값으로 저장돼 있어서" 가 아님. 좁히지 않는 이유는 실측이
+    // 한 환경 한 시점 스냅샷이라 로컬과 팀원 환경과 덤프까지 전수 보장하지
+    // 못하고, SEQUENTIAL 을 쓰는 코드가 이미 소멸해 좁혀서 얻는 것이 없기
+    // 때문임. 축소 판단은 후속 작업(BE 에서 DE 로 mode 전달)에 위임함
     // eslint-disable-next-line camelcase
     analysis_mode: {
       type: String,

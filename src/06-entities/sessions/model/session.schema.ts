@@ -20,7 +20,7 @@ export interface Session {
   measuredAt: Date | null; // 측정 시작 시점
   stopReason: 'Natural' | 'ManualEarly' | 'HeadsetLost' | 'ProcessError' | null;
   measuredDurationSeconds: number | null;
-  experimentMode: ExperimentMode; // 실험 모드 (DUAL | SEQUENTIAL | BTI | DUAL_2PC)
+  experimentMode: ExperimentMode; // 실험 모드 (BTI | DUAL_2PC)
 }
 
 /** 2. 인스턴스 메서드 타입 정의 */
@@ -97,9 +97,9 @@ const sessionSchema = new Schema<Session, SessionModel, SessionMethods>(
     },
     experimentMode: {
       type: String,
-      enum: ['DUAL', 'SEQUENTIAL', 'BTI', 'DUAL_2PC'],
+      enum: ['BTI', 'DUAL_2PC'],
       required: true,
-      default: 'DUAL',
+      default: 'DUAL_2PC',
     },
   },
   {
@@ -113,7 +113,9 @@ const sessionSchema = new Schema<Session, SessionModel, SessionMethods>(
 sessionSchema.methods.toJSON = function () {
   const obj = this.toObject() as any;
   obj.id = obj._id;
-  obj.experimentMode ??= 'DUAL'; // 레거시 문서 방어 1줄
+  // 레거시 문서 방어 1줄. 2026-08-04 마이그레이션으로 필드 부재 문서는 0이나,
+  // 좁힌 enum 과 모순되지 않게 폴백 값도 DUAL_2PC 로 맞춤 (SESSION-W002)
+  obj.experimentMode ??= 'DUAL_2PC';
   delete obj._id;
   delete obj.updatedAt;
   delete obj.createdAt;

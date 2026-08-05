@@ -129,10 +129,13 @@ router.post(
 );
 
 // 전체 파이프라인 분석 프록시
-const analyzePipelineSchema = z.object({
+// export 하는 이유는 테스트가 이 스키마를 그대로 검증하기 위함임. 예전에는
+// 테스트가 같은 모양을 복제해 썼는데, 그러면 운영 스키마가 SEQUENTIAL 을
+// 다시 허용해도 테스트는 통과함
+export const analyzePipelineSchema = z.object({
   groupId: z.string().min(1),
   subjectIndices: z.array(z.number().int().positive()),
-  mode: z.enum(['DUAL', 'SEQUENTIAL', 'BTI']).optional().default('DUAL'),
+  mode: z.enum(['DUAL', 'BTI']).optional().default('DUAL'),
   algorithm: z.string().optional().default('default'),
   params: z
     .object({

@@ -1,7 +1,7 @@
 import { config } from '@07-shared/config/config';
 import { AppError } from '@07-shared/errors';
 
-// ===== legacy 단일 slot — 1PC / SEQUENTIAL 경로 호환 =====
+// ===== legacy 단일 slot — 1PC 등록 경로. BTI 폴백이 이 slot 을 사용함 =====
 // 메모리 저장소 (서버 재시작 시 파이썬 엔진이 재등록해야 함)
 let registeredEngineUrl: string | null = null;
 

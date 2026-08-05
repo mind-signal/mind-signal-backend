@@ -35,7 +35,7 @@ function buildChatApp() {
   return app;
 }
 
-describe('chatMessageSchema 검증', () => {
+describe('[TS-CHAT-03] chatMessageSchema 검증', () => {
   it('message 있으면 검증 통과함', () => {
     const result = chatMessageSchema.safeParse({
       message: '소개 어디서 봐요?',
@@ -119,7 +119,7 @@ describe('chatAskSchema 검증', () => {
   });
 });
 
-describe('POST / — validate 미들웨어 라우트 통합', () => {
+describe('[TS-CHAT-01] POST / — validate 미들웨어 라우트 통합', () => {
   const app = buildChatApp();
 
   it('유효한 message 전송 시 200 반환함', async () => {

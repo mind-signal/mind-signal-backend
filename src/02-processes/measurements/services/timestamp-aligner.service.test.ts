@@ -44,7 +44,7 @@ const makeSample = (base = 1.0): SubjectSample => ({
   },
 });
 
-describe('timestampAlignerRegistry — BE-aligner', () => {
+describe('[TS-STREAM-01] timestampAlignerRegistry — BE-aligner', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     // 테스트 격리 — 전역 레지스트리 초기화함

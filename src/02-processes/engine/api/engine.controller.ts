@@ -9,40 +9,44 @@ import {
   evaluateSubjectCoverage,
   readCsvStats,
 } from '../services/session-coverage.service';
+import { assertGroupOwnership } from '@05-features/sessions';
 import { AppError } from '@07-shared/errors';
 import { SocketService } from '@07-shared/lib/socket';
+import { AuthedRequest } from '@07-shared/types';
+
+/**
+ * 인증된 요청자가 그 groupId 의 참여자인지 확인함 (AUTH-W002).
+ *
+ * 라우트에 `authenticate` 가 걸려 있어도 body 의 groupId 는 검증되지 않았음.
+ * 즉 계정만 있으면 남의 그룹 측정을 시작하거나 중단하거나 분석 결과를
+ * 받아낼 수 있었음.
+ *
+ * @param req - 인증 미들웨어를 통과한 요청임
+ * @param groupId - 요청 body 또는 query 의 그룹 식별자임
+ * @throws AppError 401 - 인증 정보가 없을 때
+ * @throws AppError 403 - 참여자도 생성자도 아닐 때
+ */
+async function assertRequesterOwnsGroup(
+  req: AuthedRequest,
+  groupId: string
+): Promise<void> {
+  if (!req.user?.id) {
+    throw new AppError('인증이 필요합니다.', 401);
+  }
+  await assertGroupOwnership(groupId, req.user.id);
+}
 
 /** 최소 분석 가능 시간 (초) — 교수 확인 후 확정 예정 (임시 180초) */
 const MIN_ANALYSIS_SECONDS = 180;
 
 /**
  * 3-tier 분류 후 적절한 분석 파이프라인 트리거함
- * - SEQUENTIAL: 자동 트리거 안 함. operator "Analyze" 버튼(POST /api/analyze/sequential) 대기함
  * - VALID: measuredDurationSeconds >= MIN_ANALYSIS_SECONDS
  * - PARTIAL: 한쪽만 VALID
  * - ABORTED: 둘 다 INVALID
  */
 async function triggerPostMeasurementByTier(groupId: string) {
   const { Session: SessionModel } = await import('@06-entities/sessions');
-
-  // SEQUENTIAL 모드 조기 분기: 자동 분석 트리거 안 함 (I2 + N1)
-  // subjectIndex: { $ne: null } 필터로 null 세션이 대표 세션으로 선택되는 경우 방지함
-  const representativeSession = await SessionModel.findOne({
-    groupId,
-    subjectIndex: { $ne: null },
-  }).sort({ subjectIndex: 1 });
-  const experimentMode = representativeSession?.experimentMode ?? 'DUAL';
-
-  if (experimentMode === 'SEQUENTIAL') {
-    // operator "Analyze" 버튼 대기 — 소켓으로 측정 완료만 알림
-    SocketService.emitLiveEvent('analysis-status', {
-      groupId,
-      tier: 'SEQUENTIAL',
-      message:
-        'SEQUENTIAL 모드 측정 완료. "Analyze" 버튼으로 분석을 시작하세요.',
-    });
-    return;
-  }
 
   const completedSessions = await SessionModel.find({
     groupId,
@@ -97,7 +101,8 @@ async function triggerPostMeasurementByTier(groupId: string) {
 
   if (tier === 'ABORTED') {
     // 양쪽 모두 데이터 부족 — 분석 불가, Socket.io로 ABORTED 알림함
-    SocketService.emitLiveEvent('analysis-status', {
+    // 그룹 room 으로만 보냄. 전역 emit 이면 무관한 소켓도 받음 (AUTH-W001)
+    SocketService.emitToGroup(groupId, 'analysis-status', {
       groupId,
       tier: 'ABORTED',
       message: '양쪽 모두 측정 데이터가 부족합니다. 재측정이 필요합니다.',
@@ -117,7 +122,7 @@ async function triggerPostMeasurementByTier(groupId: string) {
     // 유효 판정을 받은 subject를 넘김. 1로 하드코딩하면 유효한 쪽이 subject 2일
     // 때 탈락한 데이터를 분석하려다 실패함(2026-07-31 실측)
     const validSubjectIndex = validSessions[0].subjectIndex as number;
-    SocketService.emitLiveEvent('analysis-status', {
+    SocketService.emitToGroup(groupId, 'analysis-status', {
       groupId,
       tier: 'PARTIAL',
       message: `한 명(subject ${validSubjectIndex})의 데이터로 BTI 개인 분석을 진행합니다.`,
@@ -152,7 +157,7 @@ function notifyPipelineFailure(
   console.error(
     `[postMeasurement] groupId=${groupId} ${pipeline} 파이프라인 실패: ${reason}`
   );
-  SocketService.emitLiveEvent('analysis-status', {
+  SocketService.emitToGroup(groupId, 'analysis-status', {
     groupId,
     tier: 'ABORTED',
     message: `분석에 실패했습니다. 재측정이 필요합니다. (${pipeline} 파이프라인 오류)`,
@@ -205,7 +210,11 @@ export const engineController = {
   },
 
   /** 파이프라인 분석 요청을 파이썬 엔진으로 프록시함 */
-  analyzePipeline: async (req: Request, res: Response, next: NextFunction) => {
+  analyzePipeline: async (
+    req: AuthedRequest,
+    res: Response,
+    next: NextFunction
+  ) => {
     try {
       const {
         groupId,
@@ -214,6 +223,8 @@ export const engineController = {
         satisfactionScores,
         includeMarkdown,
       } = req.body;
+      // includeMarkdown 이 true 면 분석 서술이 응답에 그대로 실려 나감
+      await assertRequesterOwnsGroup(req, groupId);
       const result = await engineProxyService.analyzePipeline(
         groupId,
         subjectIndices,
@@ -228,9 +239,14 @@ export const engineController = {
   },
 
   /** EEG 스트리밍 시작 요청을 파이썬 엔진으로 프록시함 */
-  streamStart: async (req: Request, res: Response, next: NextFunction) => {
+  streamStart: async (
+    req: AuthedRequest,
+    res: Response,
+    next: NextFunction
+  ) => {
     try {
       const { groupId, subjectIndex } = req.body;
+      await assertRequesterOwnsGroup(req, groupId);
       const result = await engineProxyService.streamStart(
         groupId,
         subjectIndex
@@ -242,9 +258,10 @@ export const engineController = {
   },
 
   /** EEG 스트리밍 종료 요청을 파이썬 엔진으로 프록시 + 세션 COMPLETED 전이함 */
-  streamStop: async (req: Request, res: Response, next: NextFunction) => {
+  streamStop: async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       const { groupId, subjectIndex, stopReason } = req.body;
+      await assertRequesterOwnsGroup(req, groupId);
 
       // 1. 엔진에 스트리밍 종료 요청함
       const engineResult = await engineProxyService.streamStop(
@@ -331,9 +348,11 @@ export const engineController = {
   },
 
   /** 그룹 내 모든 MEASURING 세션 일괄 종료 수행함 */
-  stopAll: async (req: Request, res: Response, next: NextFunction) => {
+  stopAll: async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       const { groupId, stopReason } = req.body;
+      // 한 호출로 그룹의 MEASURING 세션 전부를 끝내므로 파급이 가장 큼
+      await assertRequesterOwnsGroup(req, groupId);
 
       // MEASURING 상태의 세션만 조회함
       const { Session: SessionModel } = await import('@06-entities/sessions');
