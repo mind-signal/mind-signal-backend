@@ -1,0 +1,9 @@
+@AGENTS.md
+@.agents/rules/architecture.md
+@.agents/rules/code-style.md
+@.agents/rules/git-workflow.md
+@.agents/rules/shared-utils.md
+@.agents/rules/test-modification.md
+@.agents/rules/troubleshooting.md
+@.agents/rules/verification-loop.md
+@.agents/rules/documentation.md

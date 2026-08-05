@@ -49,10 +49,3 @@ docs/reports/paar-2026-05-13-deep-module-poc-codex-r1.md
 # Project planning (local only)
 .plans/
 context/
-
-# AI 에이전트 문서 (마인드 시그널 한정 — 본인만 사용, 팀 공유 안 함)
-# Why: 마인드 시그널은 이 패턴 적용을 본인 학습용으로 유지하고 다른 프로젝트에 templating할 예정.
-# 다른 모델 세션이 자동으로 추적 시도하지 않도록 .git/info/exclude 대신 .gitignore에 명시.
-AGENTS.md
-CLAUDE.md
-.agents/

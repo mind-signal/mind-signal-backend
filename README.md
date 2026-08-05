@@ -8,7 +8,7 @@ Operator의 세션 생성 → Subject QR 페어링 → 실시간 EEG 스트리�
 
 ### 핵심 파이프라인
 
-```
+```text
 Emotiv 헤드셋 → Emotiv App → Python Data Engine (spawn)
               → Redis Pub/Sub → Backend SUBSCRIBE
               → Socket.io → Frontend 실시간 차트
@@ -117,14 +117,18 @@ npm run build
 
 ## 5. 프로젝트 구조
 
-```
+```text
 mind-signal-backend/
 ├── node_modules/           # Node.js 모듈
 │
 ├── src/                    # 애플리케이션 소스 코드
 │   ├── 01-app/             # 애플리케이션의 엔트리 포인트, 전역 설정, 라우터 정의
 │   │   ├── app.router.ts
-│   │   └── app.ts
+│   │   ├── app.ts
+│   │   ├── diag.controller.ts     # 진단용 엔드포인트
+│   │   ├── health.controller.ts   # 헬스체크 엔드포인트
+│   │   ├── startup-listeners.ts   # 프로세스 시작 이벤트 리스너
+│   │   └── static.ts              # 정적 파일 서빙
 │   │
 │   ├── 02-processes/       # 비즈니스 프로세스 및 워크플로우 (복잡한 여러 features를 조합)
 │   │   └── measurements/   # 실시간 스트리밍 프로세스 및 외부 엔진 오케스트레이션
@@ -153,7 +157,8 @@ mind-signal-backend/
 │   └── 07-shared/          # 범용 유틸리티, 설정, 상수 (어디서든 사용 가능)
 │       ├── api/            # 공통 API 클라이언트 또는 유틸리티
 │       ├── config/         # 환경 설정 (예: 데이터베이스 연결 정보)
-│       │   └── config.ts
+│       │   ├── config.ts
+│       │   └── swagger.ts
 │       ├── errors/         # 애플리케이션 공통 에러 정의
 │       ├── lib/            # 공통 라이브러리, 헬퍼 함수
 │       ├── middlewares/    # 공통 미들웨어
@@ -216,17 +221,17 @@ Sessions: **QR 코드를 보여주기 위한 세션 생성/조회 기능만** 05
 
 - `main` (Production): 최종 배포 브랜치 — 직접 push 금지. `dev`에서만 PR 올림
 - `dev` (Staging): 개발 통합 브랜치 — 모든 `feat/*` 기능 브랜치의 PR 대상
-- `feat/#{이슈번호}-{작업명}`: 이슈 기반 기능 브랜치
-- `fix/#{이슈번호}-{작업명}`: 이슈 기반 버그 수정 브랜치
-- `docs/#{이슈번호}-{작업명}`: 문서 작업 브랜치
-- `refactor/#{이슈번호}-{작업명}`, `chore/#{이슈번호}-{작업명}`: 그 외 목적별 브랜치
+- `feat/{도메인-wNNN}-{작업명}`: 기능 브랜치 (Work ID 필수, §10 참조)
+- `fix/{작업명}`: 버그 수정 브랜치 (Work ID 불필요)
+- `docs/{작업명}`: 문서 작업 브랜치 (Work ID 불필요)
+- `refactor/{작업명}`, `chore/{작업명}`, `hotfix/{작업명}`: 그 외 목적별 브랜치 (Work ID 불필요)
 
 ### 작업 흐름 (모든 변경은 이슈 기반)
 
 모든 코드 변경은 반드시 **GitHub Issue를 먼저 생성**한 뒤 진행합니다. **`main` 직접 commit은 금지**이며, `dev` 직접 commit도 원칙적으로 금지합니다. 오타·로컬 세팅·사소한 문서 수정도 예외 없이 이슈 → 브랜치 → PR 절차를 따릅니다.
 
 1. **Issue 생성**: GitHub Issues → New Issue → 템플릿 선택 후 작업 내용 등록 (제목: `feat: 작업 내용`)
-2. **브랜치 생성**: 이슈 페이지 Development → Create a branch → **base를 `dev`로 설정** → `타입/#{이슈번호}-{작업명}` 형식
+2. **브랜치 생성**: **base를 `dev`로 설정** → `타입/{도메인-wNNN}-{작업명}` 형식 (§10 참조, Issue 번호와 별개)
 3. **개발**: 기능 구현. 커밋 전 로컬 검증(§8) 통과 필수
 4. **PR**: **base를 `dev`로 설정**하여 PR 생성 (main 아님). Reviewers / Assignees / Labels 지정
 5. **코드리뷰**: 팀원 1명 이상의 Approve + CodeRabbit 리뷰 확인
@@ -253,16 +258,18 @@ Sessions: **QR 코드를 보여주기 위한 세션 생성/조회 기능만** 05
 
 ## 8. CI 파이프라인 & AI 코드 리뷰
 
-PR이 올라오면 아래 순서로 자동 검증됩니다. **모든 단계를 통과해야 머지 가능합니다.**
+PR이 올라오면 아래 순서로 자동 검증됩니다.
 
-```
-  PR 생성
+```text
+  PR 생성 / feat·fix·docs·refactor 브랜치 push
      ↓
-┌─── CI 자동 검증 ──────────────────────────────┐
-│ 1. lint              → ESLint 정적 분석       │
-│ 2. prettier --check  → 포맷 검증 (CI 전용)    │  ← FAIL 시
-│ 3. test              → Jest 유닛 테스트       │     머지 차단
-│ 4. build             → tsc + tsc-alias        │
+┌─── CI 자동 검증 (6단계) ──────────────────────┐
+│ 1. format:check  → Prettier 포맷 검증         │
+│ 2. typecheck     → tsc --noEmit               │  ← 1·2·4·5·6
+│ 3. depcruise     → FSD 경계 검사 (advisory)   │     FAIL 시 머지 차단
+│ 4. lint          → ESLint 정적 분석           │     (3은 continue-on-error)
+│ 5. test          → Jest 유닛 테스트           │
+│ 6. build         → tsc + tsc-alias            │
 └────────────────────────────────────────────────┘
      ↓ CI 통과한 코드만
 ┌─── CodeRabbit AI 리뷰 ────────────────────────┐
@@ -272,27 +279,16 @@ PR이 올라오면 아래 순서로 자동 검증됩니다. **모든 단계를 �
 └────────────────────────────────────────────────┘
 ```
 
-### CI가 자동으로 잡아주는 것
-
-| 도구 | 검증 항목 |
-|------|----------|
-| **ESLint** | 코드 품질, 사용하지 않는 변수, import 순서 |
-| **Prettier** | 포맷, 들여쓰기, 줄바꿈 (CI는 `npx prettier --check "src/**/*.ts"`) |
-| **Jest** | 유닛 테스트 (MongoDB · Redis 미연결, 소스 파일 기반 테스트) |
-| **TypeScript build** | `tsc` + `tsc-alias` — 타입 에러 · 경로 별칭 변환 실패 |
+`depcruise`(FSD 경계 검사)는 `continue-on-error: true`로 실행되어 현재는 advisory입니다 — 위반이 보고되지만 머지를 막지는 않습니다. `commitlint`도 PR마다 돌지만 동일하게 advisory 상태입니다.
 
 ### PR 전 로컬에서 확인하는 법
 
 ```bash
-npm run lint:fix                         # 린트 자동 수정
-npx prettier --check "src/**/*.ts"       # 포맷 검증 (CI 동일 명령)
-npm run test                             # Jest
-npm run build                            # tsc + tsc-alias
+npm run verify
+# = format:check && typecheck && depcruise && lint && test && build
 ```
 
-순서: `lint:fix → prettier --check → test → build` — 한 단계라도 실패하면 멈추고 수정 후 재실행.
-
-Integration 테스트가 필요하면 `npm run infra:up`으로 로컬 Redis를 먼저 기동하고, CI 대상 테스트는 mock으로 격리합니다.
+한 단계라도 실패하면 멈추고 수정 후 재실행합니다. Integration 테스트가 필요하면 `npm run infra:up`으로 로컬 Redis를 먼저 기동하고, CI 대상 테스트는 mock으로 격리합니다.
 
 ---
 
@@ -302,13 +298,13 @@ Integration 테스트가 필요하면 `npm run infra:up`으로 로컬 Redis를 �
 
 ### 형식
 
-```
+```text
 {type}({scope}): {description}
 ```
 
 예시:
 
-```
+```text
 feat(sessions): add pairing token-based session creation API
 fix(auth): handle JWT expiry in refresh flow
 refactor(measurement): extract engine proxy service
@@ -331,22 +327,32 @@ chore(deps): bump socket.io to 4.8.0
 | revert | 이전 커밋 되돌리기 |
 
 - 태스크 1개 = 커밋 1개
-- `main` 브랜치 직접 commit 금지 — 반드시 `feat/#{이슈번호}-{작업명}` 브랜치에서 작업 후 `dev`로 PR
+- `main` 브랜치 직접 commit 금지 — 반드시 `feat/{도메인-wNNN}-{작업명}` 브랜치에서 작업 후 `dev`로 PR
 
 ---
 
 ## 10. 브랜치 네이밍 컨벤션
 
+```text
+feat/{도메인-wNNN}-{작업명}                        # 기능 브랜치, Work ID 필수
+{fix|hotfix|refactor|docs|chore}/{작업명}          # 그 외 브랜치, Work ID 불필요
 ```
-{타입}/#{이슈번호}-{작업명}
-```
+
+`feat/*` 브랜치는 Work ID(`{DOMAIN}-W{NNN}`, 예: `AUTH-W001`, `SESSION-W102`) 기반으로 만듭니다. Work ID 채번 규칙은 `AGENTS.md` §11 참조. 나머지 타입(`fix`, `hotfix`, `refactor`, `docs`, `chore`)은 Work ID 없이 짧은 설명만 붙입니다.
 
 예시:
 
-- `feat/#14-sequential-analysis-service`
-- `fix/#27-jwt-refresh-token-handling`
-- `docs/#31-readme-ci-section`
-- `refactor/#22-engine-proxy-extract`
-- `chore/#18-upgrade-express-5`
+- `feat/auth-w001-realtime-channel-auth`
+- `fix/measurement-complete-handler-cleanup`
+- `hotfix/session-pairing-timeout`
+- `docs/agent-docs-restructure`
+- `refactor/engine-proxy-extract`
+- `chore/bump-socket-io`
 
-이슈에서 "Create a branch"로 자동 생성할 때 base branch는 항상 `dev`로 설정합니다.
+base branch는 항상 `dev`로 설정합니다.
+
+---
+
+## 11. AI 에이전트 작업 규칙
+
+이 저장소에서 AI 에이전트(Claude Code, Codex CLI 등)가 작업할 때 따라야 할 규칙은 `AGENTS.md`(공통) / `CLAUDE.md`(Claude 전용) / `.agents/rules/*.md`(상세)를 참조하세요.
