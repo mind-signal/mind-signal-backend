@@ -1,6 +1,6 @@
 # AGENTS.md — Mind Signal Backend
 
-모든 에이전트(Claude Code / Codex CLI / 기타 모델)가 이 저장소에서 작업할 때 따르는 공통 지시. Claude 전용 메타는 `CLAUDE.md`에 있다.
+모든 에이전트(Claude Code / Codex CLI / 기타 모델)가 이 저장소에서 작업할 때 따르는 공통 지시. 세부 규칙은 `.agents/rules/`의 architecture.md, code-style.md, git-workflow.md, shared-utils.md, test-modification.md, troubleshooting.md, verification-loop.md, documentation.md이며 작업 전에 직접 연다.
 
 > 자가완결 — 외부 import 없이 본문만 읽고도 동작 가능해야 함. 상세는 `.agents/rules/*.md` — 이 파일이 1차 소스이고 rules 파일은 단방향 확장.
 
