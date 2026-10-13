@@ -27,7 +27,7 @@
     "migrate:pr-a8:dry-run": "ts-node -r tsconfig-paths/register ./scripts/migrate-2026-05-16-pr-a8-subject-index.ts --dry-run",
     "migrate:pr-a8:apply": "ts-node -r tsconfig-paths/register ./scripts/migrate-2026-05-16-pr-a8-subject-index.ts --apply",
     "e2e:synthetic": "ts-node -r tsconfig-paths/register ./scripts/dual2pc-synthetic-e2e.ts",
-    "e2e:synthetic:memory": "cross-env MESSAGE_BUS=memory ts-node -r tsconfig-paths/register ./scripts/memory-bus-synthetic-e2e.ts"
+    "e2e:synthetic:memory": "ts-node -r tsconfig-paths/register ./scripts/memory-bus-synthetic-e2e.ts"
   },
   "description": "Mind Signal Project Backend",
   "dependencies": {

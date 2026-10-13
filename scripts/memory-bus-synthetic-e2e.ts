@@ -11,6 +11,10 @@
  * 실행: npm run e2e:synthetic:memory
  */
 
+// config가 import 시점에 값을 읽으므로 import보다 먼저 고정함. npm 스크립트에서
+// 셸 문법이나 cross-env(이 저장소에 설치돼 있지 않음)에 기대지 않기 위함임.
+process.env.MESSAGE_BUS = 'memory';
+
 import http from 'http';
 import type { AddressInfo } from 'net';
 import { io } from 'socket.io-client';
