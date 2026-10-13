@@ -21,6 +21,15 @@ const SAMPLE_COUNT = 5;
 const CHANNEL = `mind-signal:${GROUP_ID}:subject:${SUBJECT_IDX}`;
 
 async function main(): Promise<void> {
+  // 메모리 버스는 프로세스 밖에서 구독할 수 없어 이 스크립트의 Redis 구독으로는
+  // 전달을 확인할 수 없음. Redis에 연결을 시도하지 않고 대체 명령을 안내함
+  if (config.messageBus === 'memory') {
+    console.error(
+      'SKIP: MESSAGE_BUS=memory에서는 npm run e2e:synthetic:memory를 사용함'
+    );
+    process.exit(1);
+  }
+
   let received = 0;
   const sub = createClient({ url: config.redis.url });
   await sub.connect();

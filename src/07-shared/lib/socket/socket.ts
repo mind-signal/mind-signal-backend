@@ -4,7 +4,7 @@ import { Server, Socket } from 'socket.io';
 import { config } from '@07-shared/config/config';
 import { OPERATOR_SOCKET_TOKEN_TYPE } from '@07-shared/constants/operator-socket-token';
 import { redisService } from '@07-shared/lib/redis';
-import { ProxySampleSchema } from './proxy-envelope.schema';
+import { ProxySampleSchema, ProxyStatusSchema } from './proxy-envelope.schema';
 
 /**
  * /proxy 수신 요약을 남기는 주기(ms).
@@ -301,6 +301,57 @@ export class SocketService {
           } catch (err) {
             // Redis 일시 장애는 재시도 허용함 - 소켓은 죽이지 않음
             console.error(`[/proxy] publish 실패 ${channel}:`, err);
+            ack?.({ ok: false, retryable: true, error: 'publish_failed' });
+          }
+        }
+      );
+
+      // proxy:status 이벤트 - 헤드셋 상태 통보를 엔진의 직접 publish와 같은 형태로
+      // 같은 채널에 실음. Redis 없는 구성에서 엔진 경보가 지나는 유일한 경로임
+      socket.on(
+        'proxy:status',
+        async (
+          envelope: unknown,
+          ack?: (response: {
+            ok: boolean;
+            retryable?: boolean;
+            error?: string;
+          }) => void
+        ) => {
+          const parsed = ProxyStatusSchema.safeParse(envelope);
+          if (!parsed.success) {
+            console.warn(
+              '[/proxy] invalid_status:',
+              parsed.error.issues
+                .map((i) => `${i.path.join('.')}: ${i.message}`)
+                .join('; ')
+            );
+            ack?.({ ok: false, retryable: false, error: 'invalid_frame' });
+            return;
+          }
+
+          const {
+            group_id: groupId,
+            subject_idx: subjectIndex,
+            status,
+            silent_seconds: silentSeconds,
+          } = parsed.data;
+          const channel = `mind-signal:${groupId}:subject:${subjectIndex}`;
+          try {
+            // silentSeconds가 undefined면 JSON.stringify가 키를 생략함
+            await redisService.client.publish(
+              channel,
+              JSON.stringify({
+                type: 'headset_status',
+                status,
+                subjectIndex,
+                groupId,
+                silentSeconds,
+              })
+            );
+            ack?.({ ok: true });
+          } catch (err) {
+            console.error(`[/proxy] status publish 실패 ${channel}:`, err);
             ack?.({ ok: false, retryable: true, error: 'publish_failed' });
           }
         }
