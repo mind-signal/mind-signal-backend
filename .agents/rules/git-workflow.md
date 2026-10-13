@@ -96,7 +96,7 @@ Never commit if any step fails — fix the root cause, then recommit.
 
 `.github/workflows/ci.yml` triggers on push to `main`, `dev`, and `feat/**`/`fix/**`/`docs/**`/`refactor/**`, and on PRs into `main`/`dev`. A branch push already runs the full pipeline — you don't need to open a PR just to see CI results, but a PR is still required to merge.
 
-**Exception**: `hotfix/**` and `chore/**` are not in the `push.branches` list — pushing to those branches does not trigger CI. Open a PR into `dev`/`main` to get verification on this work.
+**Exception**: only the four prefixes above are in the `push.branches` list. Pushing to a branch with any other prefix (`hotfix/**`, `chore/**`, `test/**`, `ci/**`, `revert/**`, `perf/**`, `style/**`) does not trigger CI. Open a PR into `dev`/`main` to get verification on this work.
 
 ## Merge strategy
 
