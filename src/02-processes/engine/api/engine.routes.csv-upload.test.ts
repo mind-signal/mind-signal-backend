@@ -41,8 +41,12 @@ jest.mock('@07-shared/config/config', () => ({
 
 import engineRouter from './engine.routes';
 
-// 테스트용 CSV 저장 디렉토리 — 실제 Team-project/csv 오염 방지
-const TEST_CSV_DIR = path.join(os.tmpdir(), 'ms-csv-upload-test');
+// 테스트용 CSV 저장 디렉토리 — 실제 Team-project/csv 오염 방지.
+// 실행마다 고유한 폴더임. 고정 이름이면 같은 PC에서 동시에 도는 다른 jest
+// 프로세스의 beforeEach가 이 실행이 방금 저장한 파일을 지움 (#109)
+const TEST_CSV_DIR = fs.mkdtempSync(
+  path.join(os.tmpdir(), 'ms-csv-upload-test-')
+);
 
 function buildApp() {
   const app = express();
