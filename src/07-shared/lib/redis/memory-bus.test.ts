@@ -25,10 +25,25 @@ import { redisService } from './redis';
 
 const CHANNEL = 'mind-signal:g-mem:subject:1';
 
+// 단언이 실패해도 구독이 다음 테스트로 넘어가지 않게, 만든 구독자를 모아
+// afterEach에서 해제함. 모듈 수준 버스라 남은 핸들러가 다른 테스트의 전달 수를 바꿈.
+const subscribers: Array<{ quit: () => Promise<unknown> }> = [];
+function createSubscriber() {
+  const subscriber = redisService.client.duplicate();
+  subscribers.push(subscriber);
+  return subscriber;
+}
+
+afterEach(async () => {
+  await Promise.all(
+    subscribers.splice(0).map((subscriber) => subscriber.quit())
+  );
+});
+
 describe('MESSAGE_BUS=memory redisService', () => {
   it('Redis 클라이언트를 만들지도 connect를 호출하지도 않음', async () => {
     await redisService.connect();
-    const subscriber = redisService.client.duplicate();
+    const subscriber = createSubscriber();
     await subscriber.connect();
     await redisService.client.publish(CHANNEL, 'x');
     await subscriber.quit();
@@ -41,8 +56,8 @@ describe('MESSAGE_BUS=memory redisService', () => {
   it('publish한 메시지가 같은 채널 구독자에게만 전달됨', async () => {
     const received: string[] = [];
     const other: string[] = [];
-    const subscriber = redisService.client.duplicate();
-    const otherSubscriber = redisService.client.duplicate();
+    const subscriber = createSubscriber();
+    const otherSubscriber = createSubscriber();
     await subscriber.subscribe(CHANNEL, (message: string) => {
       received.push(message);
     });
@@ -64,7 +79,7 @@ describe('MESSAGE_BUS=memory redisService', () => {
 
   it('구독 해제 뒤에는 전달되지 않음', async () => {
     const received: string[] = [];
-    const subscriber = redisService.client.duplicate();
+    const subscriber = createSubscriber();
     await subscriber.subscribe(CHANNEL, (message: string) => {
       received.push(message);
     });
@@ -78,7 +93,7 @@ describe('MESSAGE_BUS=memory redisService', () => {
 
   it('quit은 채널 인자 없이 남은 구독을 전부 해제함', async () => {
     const received: string[] = [];
-    const subscriber = redisService.client.duplicate();
+    const subscriber = createSubscriber();
     await subscriber.subscribe(CHANNEL, (message: string) => {
       received.push(message);
     });
@@ -93,7 +108,7 @@ describe('MESSAGE_BUS=memory redisService', () => {
 
   it('pSubscribe는 패턴에 맞는 채널만 채널명과 함께 전달함', async () => {
     const received: Array<[string, string]> = [];
-    const subscriber = redisService.client.duplicate();
+    const subscriber = createSubscriber();
     await subscriber.pSubscribe(
       'mind-signal:*',
       (message: string, channel: string) => {
@@ -111,7 +126,7 @@ describe('MESSAGE_BUS=memory redisService', () => {
 
   it('구독자 예외가 발행자에게 번지지 않음', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const subscriber = redisService.client.duplicate();
+    const subscriber = createSubscriber();
     await subscriber.subscribe(CHANNEL, () => {
       throw new Error('boom');
     });
