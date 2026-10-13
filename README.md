@@ -220,22 +220,22 @@ Sessions: **QR 코드를 보여주기 위한 세션 생성/조회 기능만** 05
 ### Git Workflow
 
 - `main` (Production): 최종 배포 브랜치 — 직접 push 금지. `dev`에서만 PR 올림
-- `dev` (Staging): 개발 통합 브랜치 — 모든 `feat/*` 기능 브랜치의 PR 대상
-- `feat/{도메인-wNNN}-{작업명}`: 기능 브랜치 (Work ID 필수, §10 참조)
-- `fix/{작업명}`: 버그 수정 브랜치 (Work ID 불필요)
-- `docs/{작업명}`: 문서 작업 브랜치 (Work ID 불필요)
-- `refactor/{작업명}`, `chore/{작업명}`, `hotfix/{작업명}`: 그 외 목적별 브랜치 (Work ID 불필요)
+- `dev` (Staging): 개발 통합 브랜치 — 모든 작업 브랜치의 PR 대상
+- `{타입}/{work-id}-{작업명}`: 등록된 Work에 속한 작업의 브랜치 (타입과 관계없이 Work ID를 넣음)
+- `{타입}/{작업명}` 또는 `{타입}/{이슈번호}-{작업명}`: Work에 속하지 않는 작업의 브랜치
+
+상세 기준은 10장 「브랜치 네이밍 컨벤션」을 따릅니다.
 
 ### 작업 흐름 (모든 변경은 이슈 기반)
 
 모든 코드 변경은 반드시 **GitHub Issue를 먼저 생성**한 뒤 진행합니다. **`main` 직접 commit은 금지**이며, `dev` 직접 commit도 원칙적으로 금지합니다. 오타·로컬 세팅·사소한 문서 수정도 예외 없이 이슈 → 브랜치 → PR 절차를 따릅니다.
 
 1. **Issue 생성**: GitHub Issues → New Issue → 템플릿 선택 후 작업 내용 등록 (제목: `feat: 작업 내용`)
-2. **브랜치 생성**: **base를 `dev`로 설정** → `타입/{도메인-wNNN}-{작업명}` 형식 (§10 참조, Issue 번호와 별개)
+2. **브랜치 생성**: **base를 `dev`로 설정**합니다. Work에 속한 작업은 `{타입}/{work-id}-{작업명}`을 사용합니다. Work에 속하지 않는 작업은 `{타입}/{작업명}` 또는 `{타입}/{이슈번호}-{작업명}`을 사용합니다. 상세 기준은 10장 「브랜치 네이밍 컨벤션」을 따릅니다.
 3. **개발**: 기능 구현. 커밋 전 로컬 검증(§8) 통과 필수
 4. **PR**: **base를 `dev`로 설정**하여 PR 생성 (main 아님). Reviewers / Assignees / Labels 지정
 5. **코드리뷰**: 팀원 1명 이상의 Approve + CodeRabbit 리뷰 확인
-6. **머지**: 승인 완료 후 `feat/*` → `dev` 머지
+6. **머지**: 승인 완료 후 작업 브랜치 → `dev` 머지
 7. **Issue Close**: 머지 직후 해당 이슈 close
 8. **릴리스**: `dev`가 안정화되면 `dev` → `main` PR을 별도 생성, CI + CodeRabbit 리뷰 통과 후 머지
 
@@ -327,27 +327,25 @@ chore(deps): bump socket.io to 4.8.0
 | revert | 이전 커밋 되돌리기 |
 
 - 태스크 1개 = 커밋 1개
-- `main` 브랜치 직접 commit 금지 — 반드시 `feat/{도메인-wNNN}-{작업명}` 브랜치에서 작업 후 `dev`로 PR
+- `main` 브랜치 직접 commit 금지 — 반드시 작업 브랜치(10장 「브랜치 네이밍 컨벤션」)에서 작업 후 `dev`로 PR
 
 ---
 
 ## 10. 브랜치 네이밍 컨벤션
 
 ```text
-feat/{도메인-wNNN}-{작업명}                        # 기능 브랜치, Work ID 필수
-{fix|hotfix|refactor|docs|chore}/{작업명}          # 그 외 브랜치, Work ID 불필요
+{타입}/{work-id}-{작업명}       # 등록된 Work에 속한 작업 (타입과 관계없음)
+{타입}/{이슈번호}-{작업명}      # Work에 속하지 않는 작업
+{타입}/{작업명}                 # Work에 속하지 않는 작업 (이슈 번호 생략)
 ```
 
-`feat/*` 브랜치는 Work ID(`{DOMAIN}-W{NNN}`, 예: `AUTH-W001`, `SESSION-W102`) 기반으로 만듭니다. Work ID 채번 규칙은 `AGENTS.md` §11 참조. 나머지 타입(`fix`, `hotfix`, `refactor`, `docs`, `chore`)은 Work ID 없이 짧은 설명만 붙입니다.
+작업이 등록된 Work(`{DOMAIN}-W{NNN}`, 예: `OPS-W017`)의 범위와 완료 조건에 들어가면 타입과 관계없이 Work ID 전체를 소문자로 바꿔 브랜치 이름에 넣습니다. Work ID의 의미는 `AGENTS.md`에 있습니다. Work에 속하지 않는 작업은 작업명만 사용하거나 작업명 앞에 GitHub 이슈 번호를 적습니다. Work에 속한 브랜치에는 이슈 번호를 Work ID 대신 쓰지 않고, 이슈는 PR 본문에서 연결합니다. 작업명은 영문 소문자, 숫자, 하이픈으로 씁니다. 계획판(`mind-signal/.plans/`)에 접근할 수 없으면 전달받은 Work ID와 작업 범위로 판단하고, Work ID를 전달받지 못했으면 Work에 속하지 않는 작업의 형식을 사용합니다. 이미 만든 브랜치는 이 규칙을 이유로 개명하지 않습니다.
 
-예시:
+실제 병합 이력에 있는 브랜치 이름의 예:
 
-- `feat/auth-w001-realtime-channel-auth`
-- `fix/measurement-complete-handler-cleanup`
-- `hotfix/session-pairing-timeout`
-- `docs/agent-docs-restructure`
-- `refactor/engine-proxy-extract`
-- `chore/bump-socket-io`
+- `feat/ops-w013-message-bus-memory`
+- `fix/session-w005-subscriber-leak`
+- `docs/docs-w010-agent-docs-restructure`
 
 base branch는 항상 `dev`로 설정합니다.
 
