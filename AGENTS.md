@@ -4,7 +4,7 @@
 
 > 자가완결 — 외부 import 없이 본문만 읽고도 동작 가능해야 함. 상세는 `.agents/rules/*.md` — 이 파일이 1차 소스이고 rules 파일은 단방향 확장.
 
-> **제품 문서와 작업 상태**: 4레포 공통 문서는 `../docs/`(구조·데이터 계약은 `docs/architecture/`, 요구사항·RTM은 `docs/requirements/`)에 있고, 현재 작업 상태 정본은 `../.plans/DASHBOARD.md`(2026-07-30 DOCS-W001)다. 둘 다 이 레포 클론 밖 경로라 §11에 링크 없이도 판단 가능한 요약을 남겨둔다.
+> **제품 문서와 작업 상태**: 제품 공통 문서는 `../docs/`(구조·데이터 계약은 `docs/architecture/`, 요구사항·RTM은 `docs/requirements/`)에 있고, 현재 작업 상태 정본은 `../.plans/DASHBOARD.md`(2026-07-30 DOCS-W001)다. 둘 다 이 레포 클론 밖 경로라 §11에 링크 없이도 판단 가능한 요약을 남겨둔다.
 
 ## 1. 개요
 
