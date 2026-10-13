@@ -1,5 +1,6 @@
 import { Session } from '@06-entities/sessions';
 import { redisService } from '@07-shared/lib/redis';
+import type { BusSubscriber } from '@07-shared/lib/redis';
 import { BrainSyncAllSchema, SocketService } from '@07-shared/lib/socket';
 import { AppError } from '@07-shared/errors';
 import { engineRegistryService } from '@02-processes/engine/services/engine-registry.service';
@@ -8,7 +9,6 @@ import { timestampAlignerRegistry } from './timestamp-aligner.service';
 import { stimulusBroadcasterService } from './stimulus-broadcaster.service';
 import type { SubjectSample } from './timestamp-aligner.service';
 import { StreamHealthTracker } from './stream-health.service';
-import { RedisClientType } from 'redis';
 import { config } from '@07-shared/config/config';
 
 // ---------------------------------------------------------------------------
@@ -25,14 +25,14 @@ export type StartMeasurementResult =
 // ---------------------------------------------------------------------------
 
 /** Redis 구독자 레지스트리 — 키: `${groupId}:${subjectIndex}` */
-const subscriberRegistry = new Map<string, RedisClientType>();
+const subscriberRegistry = new Map<string, BusSubscriber>();
 
 // ---------------------------------------------------------------------------
 // 모듈 레벨 구독자 레지스트리 — DUAL_2PC 경로 (v7 H-1 반영)
 // ---------------------------------------------------------------------------
 
 /** DUAL_2PC groupId별 Redis 구독자 목록 — cleanup 시 unsubscribe 필요 */
-const groupSubscribers = new Map<string, RedisClientType[]>();
+const groupSubscribers = new Map<string, BusSubscriber[]>();
 
 /** DUAL_2PC groupId별 flush setInterval 핸들러 — unsubscribeGroupChannels에서 clearInterval */
 const groupFlushIntervals = new Map<string, ReturnType<typeof setInterval>>();
@@ -78,7 +78,7 @@ export const resetActiveDualGroup = (): void => {
  * @param groupId - 실험 그룹 ID
  */
 async function subscribeWithAligner(groupId: string): Promise<void> {
-  const subscribers: RedisClientType[] = [];
+  const subscribers: BusSubscriber[] = [];
   // SESSION-W005: 배열을 비어 있을 때 미리 등록함. 참조를 공유하므로 push 즉시
   // 추적됨 — 루프 끝에서 등록하면 두 번째 구독자가 실패할 때 첫 번째가 어느
   // 맵에도 없는 고아가 되어 unsubscribeGroupChannels가 찾지 못함
@@ -98,7 +98,7 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
   // v7 H-PREP-1: subjectIndex는 1-based
   // 기존 Redis 채널 규칙(`mind-signal:{groupId}:subject:{subjectIndex}`) 그대로 유지
   for (const subjectIndex of [1, 2]) {
-    const subscriber = redisService.client.duplicate() as RedisClientType;
+    const subscriber = redisService.client.duplicate();
     await subscriber.connect();
     // SESSION-W005 후속: connect 직후에 등록함. subscribe 뒤에 등록하면 구독에
     // 실패한 구독자가 TCP 를 연 채 배열에 없어 회수 대상에서 빠진다.
@@ -541,7 +541,7 @@ export const startMeasurementService = async (
 
   // 구독자 레지스트리에 등록함
   const registryKey = `${session.groupId}:${session.subjectIndex}`;
-  subscriberRegistry.set(registryKey, subscriber as unknown as RedisClientType);
+  subscriberRegistry.set(registryKey, subscriber);
 
   const channel = `mind-signal:${session.groupId}:subject:${session.subjectIndex}`;
   await subscriber.subscribe(channel, (message: string) => {
