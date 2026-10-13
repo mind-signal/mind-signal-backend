@@ -7,6 +7,8 @@
  * 전달 범위는 같은 프로세스 안으로 한정됨 — 다른 프로세스는 받지 못함.
  */
 
+import type { BusClient } from './message-bus.types';
+
 type Listener = (message: string, channel: string) => void;
 type Handler = (channel: string, message: string) => boolean;
 
@@ -21,7 +23,7 @@ function patternToRegExp(pattern: string): RegExp {
   return new RegExp(`^${escaped.join('.*')}$`);
 }
 
-export class MemoryBusClient {
+export class MemoryBusClient implements BusClient {
   /** redisService.connect()가 실제 연결을 시도하지 않도록 항상 true임. */
   public readonly isOpen = true;
 
