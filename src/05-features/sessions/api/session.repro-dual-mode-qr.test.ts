@@ -69,10 +69,18 @@ jest.mock('@05-features/sessions/services/pairing.service', () => ({
   pairDeviceProcess: jest.fn(),
 }));
 
+// 그룹 생성자 확인 mock — 기본은 통과, AUTH-W003 테스트에서 거부로 바꿈
+jest.mock('@05-features/sessions/services/group-ownership.service', () => ({
+  assertGroupCreator: jest.fn().mockResolvedValue(undefined),
+  assertGroupOwnership: jest.fn().mockResolvedValue(undefined),
+  assertSessionOwnership: jest.fn().mockResolvedValue(undefined),
+}));
+
 // 라우터 import (mock 적용 후)
 import sessionRoutes from './session.routes';
 import { AppError } from '@07-shared/errors';
 import { createGroupSessionProcess } from '@05-features/sessions/services/pairing.service';
+import { assertGroupCreator } from '@05-features/sessions/services/group-ownership.service';
 
 // ===== bare Express app 빌드 =====
 // session.routes.adminpair.test.ts:57-71 패턴 정합 — mongoose/app.ts side-effect 없음
@@ -287,5 +295,80 @@ describe('Reproduce: DUAL 모드 QR 미생성 버그 회귀 박제', () => {
       expect(res.status).toBe(401);
       expect(createGroupSessionProcess).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ===== AUTH-W003 — 기존 그룹에 세션 추가 시 그룹 생성자 확인 =====
+// 기존 그룹에 세션을 추가하는 요청은 그 그룹의 생성자만 할 수 있어야 함
+
+describe('POST /api/sessions — 기존 그룹 추가 시 생성자 확인 (AUTH-W003)', () => {
+  const GROUP_ID = '65c9f0b2a1b2c3d4e5f67800';
+  const REQUESTER_ID = '507f1f77bcf86cd799439011';
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // 남은 mockRejectedValueOnce 까지 지우고 기본 통과로 되돌림
+    jest.mocked(assertGroupCreator).mockReset().mockResolvedValue(undefined);
+    (createGroupSessionProcess as jest.Mock).mockResolvedValue({
+      _id: '507f1f77bcf86cd799439099',
+      groupId: GROUP_ID,
+      subjectIndex: 2,
+      pairingToken: 'AABBCC',
+      status: 'CREATED',
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+    });
+  });
+
+  it('S1 — 생성자가 아니면 403이고 세션을 만들지 않음', async () => {
+    jest
+      .mocked(assertGroupCreator)
+      .mockRejectedValueOnce(
+        new AppError('해당 그룹의 운영자만 수행할 수 있습니다.', 403)
+      );
+
+    const res = await request(app)
+      .post('/api/sessions')
+      .set('Authorization', TEST_JWT)
+      .send({ groupId: GROUP_ID });
+
+    expect(res.status).toBe(403);
+    expect(createGroupSessionProcess).not.toHaveBeenCalled();
+  });
+
+  it('S2 — 세션이 없는 그룹이면 404이고 세션을 만들지 않음', async () => {
+    jest
+      .mocked(assertGroupCreator)
+      .mockRejectedValueOnce(
+        new AppError('해당 그룹을 찾을 수 없습니다.', 404)
+      );
+
+    const res = await request(app)
+      .post('/api/sessions')
+      .set('Authorization', TEST_JWT)
+      .send({ groupId: GROUP_ID });
+
+    expect(res.status).toBe(404);
+    expect(createGroupSessionProcess).not.toHaveBeenCalled();
+  });
+
+  it('S3 — 생성자이면 201이고 생성자 확인을 거침', async () => {
+    const res = await request(app)
+      .post('/api/sessions')
+      .set('Authorization', TEST_JWT)
+      .send({ groupId: GROUP_ID });
+
+    expect(res.status).toBe(201);
+    expect(assertGroupCreator).toHaveBeenCalledWith(GROUP_ID, REQUESTER_ID);
+    expect(createGroupSessionProcess).toHaveBeenCalled();
+  });
+
+  it('S4 — groupId 없이 새 그룹을 만들면 생성자 확인을 거치지 않음', async () => {
+    const res = await request(app)
+      .post('/api/sessions')
+      .set('Authorization', TEST_JWT)
+      .send({});
+
+    expect(res.status).toBe(201);
+    expect(assertGroupCreator).not.toHaveBeenCalled();
   });
 });
