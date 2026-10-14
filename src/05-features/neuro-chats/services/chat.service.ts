@@ -8,6 +8,8 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 import nodemailer from 'nodemailer';
 import { AnalysisResult } from '@06-entities/analysis-results';
+import { assertGroupOwnership } from '@05-features/sessions';
+import { AppError } from '@07-shared/errors';
 
 interface ChatResult {
   status: 'success';
@@ -59,18 +61,27 @@ export const chatService = {
       };
     }
 
-    // 2. 로그인한 사용자의 groupId에 한해 DB에서 분석 markdown 조회함
+    // 2. 로그인한 사용자가 그룹의 피험자나 운영자일 때만 분석 markdown 조회함
     let analysisMarkdown: string | undefined;
     if (!config.chatOnly && groupId && userId) {
-      const result = await AnalysisResult.findOne({
-        groupId,
-        $or: [{ user1Id: userId }, { user2Id: userId }],
-      })
-        .select('markdown')
-        .lean()
-        .exec();
-      if (result?.markdown) {
-        analysisMarkdown = result.markdown;
+      let ownsGroup = false;
+      try {
+        await assertGroupOwnership(groupId, userId);
+        ownsGroup = true;
+      } catch (error) {
+        // 소유자가 아니거나(403) 그룹이 없으면(404) 리포트 없이 답함. 그 밖의 오류는 전파함
+        const isDenied =
+          error instanceof AppError && [403, 404].includes(error.statusCode);
+        if (!isDenied) throw error;
+      }
+      if (ownsGroup) {
+        const result = await AnalysisResult.findOne({ groupId })
+          .select('markdown')
+          .lean()
+          .exec();
+        if (result?.markdown) {
+          analysisMarkdown = result.markdown;
+        }
       }
     }
 
