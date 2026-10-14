@@ -25,6 +25,7 @@ import { AuthedRequest } from '@07-shared/types';
  * @param groupId - 요청 body 또는 query 의 그룹 식별자임
  * @throws AppError 401 - 인증 정보가 없을 때
  * @throws AppError 403 - 참여자도 생성자도 아닐 때
+ * @throws AppError 404 - 해당 groupId 의 세션이 하나도 없을 때
  */
 async function assertRequesterOwnsGroup(
   req: AuthedRequest,
@@ -290,12 +291,17 @@ export const engineController = {
   },
 
   /** registry 상태 snapshot 반환함 (FE polling 용) */
-  getRegistryStatus: (req: Request, res: Response, next: NextFunction) => {
+  getRegistryStatus: async (
+    req: AuthedRequest,
+    res: Response,
+    next: NextFunction
+  ) => {
     try {
       const groupId = req.query.groupId as string;
       if (!groupId || typeof groupId !== 'string') {
         throw new AppError('groupId 쿼리 필수', 400);
       }
+      await assertRequesterOwnsGroup(req, groupId);
       const status = dualTriggerService.getRegistryStatus(groupId);
       res.status(200).json(status);
     } catch (err) {
@@ -304,9 +310,14 @@ export const engineController = {
   },
 
   /** 양쪽 DE에 assign-group 트리거 요청 처리함 */
-  dualTrigger: async (req: Request, res: Response, next: NextFunction) => {
+  dualTrigger: async (
+    req: AuthedRequest,
+    res: Response,
+    next: NextFunction
+  ) => {
     try {
       const { groupId } = req.body;
+      await assertRequesterOwnsGroup(req, groupId);
       const subjects = await dualTriggerService.collectPendingSubjects(groupId);
       if (subjects.length !== 2) {
         throw new AppError('양쪽 DE 모두 pending 상태가 아님', 503);
