@@ -495,7 +495,11 @@ router.post(
 // ===== Phase 17.6 — DUAL_2PC trigger gap hotfix 라우트 (LD-31) =====
 
 // registry 상태 snapshot 조회 (FE polling 용)
-router.get('/registry-status', engineController.getRegistryStatus);
+router.get(
+  '/registry-status',
+  authenticate,
+  engineController.getRegistryStatus
+);
 
 // 양쪽 DE에 assign-group 트리거 요청 처리함
 const dualTriggerSchema = z.object({
@@ -504,6 +508,7 @@ const dualTriggerSchema = z.object({
 
 router.post(
   '/dual-trigger',
+  authenticate,
   validate(dualTriggerSchema),
   engineController.dualTrigger
 );
