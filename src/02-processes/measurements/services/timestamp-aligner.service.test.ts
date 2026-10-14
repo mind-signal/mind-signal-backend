@@ -3,7 +3,7 @@
  *
  * 검증 항목:
  *   - ±200ms 내 두 subject 샘플 → AlignedSample 생성 + SocketService.emitToGroup 호출
- *   - 500ms 초과 샘플 → drop (expired)
+ *   - tolerance 초과 미매칭 샘플 → 단독 emit (만료 drop 없음)
  *   - registry 수명 관리 — getOrCreate, cleanup
  *   - v8 C-1: brain_sync_all 타입 가드 (measurement.service 소스 검증)
  */
@@ -180,42 +180,54 @@ describe('[TS-STREAM-01] timestampAlignerRegistry — BE-aligner', () => {
   });
 
   // ============================================================
-  // 500ms 만료 drop
+  // 지연 샘플 보존 — flush 가 늦어져도 drop 하지 않음
   // ============================================================
 
-  describe('500ms 만료 drop', () => {
-    it('500ms 초과 샘플 → flush 시 drop됨 (매칭 없음)', () => {
+  describe('지연 샘플 보존 (구 500ms 만료 drop 대체)', () => {
+    // 이전에는 500ms 넘은 미매칭 샘플을 조용히 버렸다. flush 는 100ms 마다 돌지만
+    // 이벤트 루프가 잠깐 멈추면 샘플이 tolerance 창을 건너뛰어 사라졌다. 늦게
+    // 본 샘플도 정상 데이터라 pair 또는 단독으로 반드시 내보냄 (CodeRabbit #106)
+    it('flush 가 600ms 늦어도 tolerance 내 두 샘플은 pair 로 emit됨', () => {
       // Arrange
-      const groupId = 'grp-expire';
+      const groupId = 'grp-late-pair';
       timestampAlignerRegistry.getOrCreate(groupId, 200);
-      // 과거 타임스탬프 (600ms 이전) 샘플 적재
       const oldTs = Date.now() - 600;
+      const sample1 = makeSample(1.0);
+      const sample2 = makeSample(2.0);
 
       // Act
-      timestampAlignerRegistry.ingest(groupId, 1, makeSample(), oldTs);
-      timestampAlignerRegistry.ingest(groupId, 2, makeSample(), oldTs);
-      // flush 시 Date.now() - oldTs > 500ms → 만료 drop
+      timestampAlignerRegistry.ingest(groupId, 1, sample1, oldTs);
+      timestampAlignerRegistry.ingest(groupId, 2, sample2, oldTs);
       const result = timestampAlignerRegistry.flush(groupId);
 
-      // Assert — 만료로 drop → 빈 배열 반환
-      expect(result).toHaveLength(0);
+      // Assert
+      expect(result).toHaveLength(1);
+      expect(result[0].subject_1).toEqual(sample1);
+      expect(result[0].subject_2).toEqual(sample2);
     });
 
-    it('만료 샘플은 버퍼에서 제거되고 다음 flush에서 재처리 안 됨', () => {
-      // Arrange
-      const groupId = 'grp-expire-clean';
+    it('flush 가 늦어 둘 다 500ms 를 넘겼고 서로 tolerance 밖이면 각각 단독 emit됨', () => {
+      // Arrange — 300ms 위상 차 스트림에서 이벤트 루프가 900ms 멈춘 상황
+      const groupId = 'grp-stall';
       timestampAlignerRegistry.getOrCreate(groupId, 200);
-      const oldTs = Date.now() - 600;
+      const now = Date.now();
+      const sample1 = makeSample(1.0);
+      const sample2 = makeSample(2.0);
+      timestampAlignerRegistry.ingest(groupId, 1, sample1, now - 900);
+      timestampAlignerRegistry.ingest(groupId, 2, sample2, now - 600);
 
-      // Act — 1차 flush에서 drop
-      timestampAlignerRegistry.ingest(groupId, 1, makeSample(), oldTs);
-      timestampAlignerRegistry.flush(groupId);
+      // Act
+      const result = timestampAlignerRegistry.flush(groupId);
 
-      // 2차 flush — 버퍼가 비어 있어야 함
-      const result2 = timestampAlignerRegistry.flush(groupId);
-
-      // Assert
-      expect(result2).toHaveLength(0);
+      // Assert — 하나도 버리지 않고 둘 다 단독으로 나감. 버퍼는 비어 다음 flush 재emit 없음
+      expect(result).toHaveLength(2);
+      expect(
+        result.map((s) => [s.subject_1 !== null, s.subject_2 !== null])
+      ).toEqual([
+        [true, false],
+        [false, true],
+      ]);
+      expect(timestampAlignerRegistry.flush(groupId)).toHaveLength(0);
     });
   });
 
@@ -327,6 +339,103 @@ describe('[TS-STREAM-01] timestampAlignerRegistry — BE-aligner', () => {
       const second = timestampAlignerRegistry.flush(groupId);
 
       // Assert 2 — 조기 solo가 아니라 pair로 매칭됨
+      expect(second).toHaveLength(1);
+      expect(second[0].subject_1).toEqual(sample1);
+      expect(second[0].subject_2).toEqual(sample2);
+    });
+  });
+
+  // ============================================================
+  // subject 1 단독 emit — subject 2 분기와 대칭 (2026-09-07 측정 회귀)
+  // ============================================================
+
+  describe('단일 헤드셋 — subject 1 단독 emit', () => {
+    // 2026-09-07 2PC 측정에서 두 엔진의 도착 위상 차가 200ms 를 넘는 동안
+    // subject 1 은 매칭 실패 후 500ms 뒤 조용히 drop 되고 subject 2 만 단독
+    // emit 됐다. BE 는 두 subject 를 다 받고 있었는데 화면은 1 만 STALE 이었다.
+    it('subject 1이 tolerance 초과 대기(subject 2 없음) → subject_2:null로 단독 emit됨', () => {
+      // Arrange
+      const groupId = 'grp-single1';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      const sample1 = makeSample(1.0);
+
+      // Act
+      timestampAlignerRegistry.ingest(groupId, 1, sample1, Date.now() - 250);
+      const result = timestampAlignerRegistry.flush(groupId);
+
+      // Assert
+      expect(result).toHaveLength(1);
+      expect(result[0].subject_1).toEqual(sample1);
+      expect(result[0].subject_2).toBeNull();
+      expect(mockEmitToGroup).toHaveBeenCalledTimes(1);
+      expect(mockEmitToGroup.mock.calls[0][1]).toBe('aligned_pair');
+    });
+
+    it('subject 1 단독 emit 후 버퍼 비워짐 — 다음 flush 재emit 없음', () => {
+      // Arrange
+      const groupId = 'grp-single1-clear';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      timestampAlignerRegistry.ingest(
+        groupId,
+        1,
+        makeSample(1.0),
+        Date.now() - 250
+      );
+
+      // Act
+      timestampAlignerRegistry.flush(groupId);
+      mockEmitToGroup.mockClear();
+      const second = timestampAlignerRegistry.flush(groupId);
+
+      // Assert
+      expect(second).toHaveLength(0);
+      expect(mockEmitToGroup).not.toHaveBeenCalled();
+    });
+
+    it('두 subject가 tolerance 초과 위상 차로 계속 들어오면 둘 다 단독 emit됨 (2026-09-07 실측)', () => {
+      // Arrange — 1Hz 두 스트림이 300ms 어긋나 도착. 상대 버퍼가 비는 순간이
+      // 없어, "상대 버퍼 비움"을 조건으로 걸면 먼저 온 쪽이 500ms 만료로 항상
+      // drop 됨. tolerance 를 넘겨 기다린 샘플은 미래 파트너와도 못 맞으므로
+      // 상대 버퍼와 무관하게 혼자 나가야 함
+      const groupId = 'grp-phase300';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      const now = Date.now();
+      const sample1 = makeSample(1.0);
+      const sample2 = makeSample(2.0);
+      timestampAlignerRegistry.ingest(groupId, 1, sample1, now - 300);
+      timestampAlignerRegistry.ingest(groupId, 2, sample2, now);
+
+      // Act
+      const result = timestampAlignerRegistry.flush(groupId);
+
+      // Assert — subject 1 은 혼자 나가고, 아직 어린 subject 2 는 버퍼에 남음
+      expect(result).toHaveLength(1);
+      expect(result[0].subject_1).toEqual(sample1);
+      expect(result[0].subject_2).toBeNull();
+      expect(mockEmitToGroup).toHaveBeenCalledTimes(1);
+    });
+
+    it('subject 2가 tolerance 내로 늦게 도착하면 조기 단독 emit 없이 pair로 매칭됨', () => {
+      // Arrange — subject 1 먼저 도착(아직 페어링 윈도 내)
+      const groupId = 'grp-late2';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      const now = Date.now();
+      const sample1 = makeSample(1.0);
+      const sample2 = makeSample(2.0);
+
+      // Act 1 — subject 1만 있고 어림 → 단독 emit 안 함
+      timestampAlignerRegistry.ingest(groupId, 1, sample1, now);
+      const first = timestampAlignerRegistry.flush(groupId);
+
+      // Assert 1
+      expect(first).toHaveLength(0);
+      expect(mockEmitToGroup).not.toHaveBeenCalled();
+
+      // Act 2 — subject 2가 tolerance 내(100ms)로 늦게 도착
+      timestampAlignerRegistry.ingest(groupId, 2, sample2, now + 100);
+      const second = timestampAlignerRegistry.flush(groupId);
+
+      // Assert 2 — pair로 매칭됨
       expect(second).toHaveLength(1);
       expect(second[0].subject_1).toEqual(sample1);
       expect(second[0].subject_2).toEqual(sample2);

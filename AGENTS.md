@@ -4,7 +4,7 @@
 
 > 자가완결 — 외부 import 없이 본문만 읽고도 동작 가능해야 함. 상세는 `.agents/rules/*.md` — 이 파일이 1차 소스이고 rules 파일은 단방향 확장.
 
-> **제품 문서와 작업 상태**: 4레포 공통 문서는 `../docs/`(구조·데이터 계약은 `docs/architecture/`, 요구사항·RTM은 `docs/requirements/`)에 있고, 현재 작업 상태 정본은 `../.plans/DASHBOARD.md`(2026-07-30 DOCS-W001)다. 둘 다 이 레포 클론 밖 경로라 §11에 링크 없이도 판단 가능한 요약을 남겨둔다.
+> **제품 문서와 작업 상태**: 제품 공통 문서는 `../docs/`(구조·데이터 계약은 `docs/architecture/`, 요구사항·RTM은 `docs/requirements/`)에 있고, 현재 작업 상태 정본은 `../.plans/DASHBOARD.md`(2026-07-30 DOCS-W001)다. 둘 다 이 레포 클론 밖 경로라 §11에 링크 없이도 판단 가능한 요약을 남겨둔다.
 
 ## 1. 개요
 
@@ -82,9 +82,19 @@ Timestamp: 서버측 ingest timestamp가 단일 진실이고, client-local clock
 
 Conventional Commits: `{type}({scope}): {description}` — type은 `feat fix docs chore refactor test ci revert perf style`, scope는 소문자 kebab-case, description은 소문자 시작·마침표 없음.
 
-브랜치 네이밍: `feat/{domain-wNNN}-{slug}`는 Work ID 필수(정의는 §11 참조), 예: `feat/auth-w001-realtime-channel-auth`. `fix/`, `hotfix/`, `refactor/`, `docs/`, `chore/`는 Work ID 불필요 — 짧은 설명만 붙인다, 예: `fix/measurement-complete-handler-cleanup`.
+브랜치 네이밍(제품 공통 규칙. 정본은 `mind-signal/.plans/README.md`의 「브랜치 이름」 절, 상세는 `.agents/rules/git-workflow.md`):
 
-태스크 1개 = 커밋 1개. `main` 직접 커밋 금지 — `feat/... → PR → dev → PR → main`.
+- 작업이 등록된 Work의 범위와 완료 조건에 들어가면 유형과 관계없이 `{type}/{work-id}-{slug}`를 쓴다. `{work-id}`는 Work ID 전체의 소문자다(예: `fix/session-w005-subscriber-leak`). Work ID의 정의는 11장 「문서화 & Work ID」에 있다.
+- Work에 속하지 않는 작업은 `{type}/{slug}` 또는 `{type}/{이슈번호}-{slug}`를 쓴다(형식 예: `fix/readme-link`, `fix/123-readme-link`). 이슈 번호 앞의 `#`은 적어도 되고 생략해도 된다.
+- Work에 속한 브랜치에는 이슈 번호를 Work ID 대신 쓰지 않는다.
+- 브랜치 하나에는 Work 하나만 담는다. 여러 Work를 구현하면 Work마다 브랜치를 나눈다.
+- 종결된 Work의 ID는 새 브랜치에 쓰지 않는다. 종결된 Work의 결과를 고치는 작업에 새 Work ID를 전달받았으면 그 ID를 쓴다. 전달받지 못했으면 Work에 속하지 않는 작업의 형식을 쓴다.
+- `{type}`은 작업의 최종 목적에 맞는 커밋 유형이다. 운영 긴급 수정에는 `{type}` 자리에 `hotfix`도 쓰며 형식은 다른 유형과 같다.
+- `{slug}`는 영문 소문자, 숫자, 하이픈으로 쓴다.
+- 계획판(`mind-signal/.plans/`)에 접근할 수 없으면 전달받은 Work ID와 작업 범위로 판단한다. Work ID를 전달받지 못했으면 Work에 속하지 않는 작업의 형식을 쓴다.
+- 이미 만든 브랜치는 개명하지 않는다. 브랜치를 만든 뒤 Work 소속이 바뀌면 PR 본문에 적는다.
+
+태스크 1개 = 커밋 1개. `main` 직접 커밋 금지 — `작업 브랜치 → PR → dev → PR → main`.
 
 모든 커밋은 마지막에 아래를 붙인다:
 ```text
@@ -110,7 +120,7 @@ Operator/Subject = PC 연구원/모바일 참여자. Phase 1 세션 생성, 1.5-
 
 FR 구현: `docs/requirements/FR-XX-<slug>.md` + 동일 PR에 RTM row. 기술 결정: `docs/architecture/decisions/ADR-NNN-<slug>.md`(Accepted 후 append-only). Spike/벤치마크: `docs/reports/`. 전체 결정 트리: `.agents/rules/documentation.md`.
 
-제품 전체 계획 폴더는 이 레포 밖 `Team-project/mind-signal/.plans/`에 있다(`Team-project/.plans/`는 크로스 프로젝트 메타 전용이라 다름). Work ID는 `{DOMAIN}-W{NNN}[-slug]` 형태이고, 도메인(`ANALYSIS`, `EEG`, `SESSION`, `OPS`, `DOCS`)별로 독립 채번한다. 신규 작업은 W001부터, 2026-07-30 마이그레이션 시점에 소급 부여한 것은 W101부터 시작한다(그래서 `SESSION-W114`는 전체 114번째가 아니라 Session 소급 14번째다). 번호는 영구 식별자 — 재번호화·재사용 없음, 시간순은 번호가 아니라 레지스트리의 "시기" 열로 읽는다. 규칙 정본: `mind-signal/.plans/README.md`; 소급 매핑: `mind-signal/.plans/LEGACY-REGISTRY.md`.
+제품 전체 계획 폴더는 이 레포 밖 `Team-project/mind-signal/.plans/`에 있다(`Team-project/.plans/`는 크로스 프로젝트 메타 전용이라 다름). Work ID는 `{DOMAIN}-W{NNN}` 형식이고 작업 폴더 이름은 `{WORK-ID}` 또는 `{WORK-ID}-{slug}` 형식이다. 도메인 접두사(`OPS`, `SESSION` 등)별로 독립 채번하며 전체 목록은 `mind-signal/.plans/README.md`의 접두사 레지스트리를 따른다. 신규 작업은 W001부터, 2026-07-30 마이그레이션 시점에 소급 부여한 것은 W101부터 시작한다(그래서 `SESSION-W114`는 전체 114번째가 아니라 Session 소급 14번째다). 번호는 영구 식별자 — 재번호화·재사용 없음, 시간순은 번호가 아니라 레지스트리의 "시기" 열로 읽는다. 규칙 정본: `mind-signal/.plans/README.md`; 소급 매핑: `mind-signal/.plans/LEGACY-REGISTRY.md`.
 
 ## 12. 트러블슈팅
 

@@ -2,7 +2,7 @@ import { Session } from '@06-entities/sessions';
 import { AnalysisResult } from '@06-entities/analysis-results';
 import { MatchingPool } from '@06-entities/matching-pools';
 import { EegRecord } from '@06-entities/eeg-records';
-import { Consent } from '@06-entities/consents';
+import { consentRepository } from '@06-entities/consents';
 import { engineProxyService } from '@02-processes/engine/services/engine-proxy.service';
 import { config } from '@07-shared/config/config';
 
@@ -111,9 +111,9 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
   const user1Id = (session1.userId as any)._id;
   const user2Id = (session2.userId as any)._id;
 
-  // 1. EegRecord 2건 생성함 (C-3: Consent 조회)
-  const consent1 = await Consent.findOne({ userId: user1Id });
-  const consent2 = await Consent.findOne({ userId: user2Id });
+  // 1. EegRecord 2건 생성함 (C-3: Consent 조회 — 없으면 종이 동의서로 자동 생성)
+  const consent1 = await consentRepository.ensureConsent(user1Id);
+  const consent2 = await consentRepository.ensureConsent(user2Id);
 
   const record1Doc: any = {
     userId: user1Id,

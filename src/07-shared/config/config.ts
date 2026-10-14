@@ -48,6 +48,16 @@ if (nodeEnv === 'production' && adminEmails.length === 0) {
   );
 }
 
+// 3.6 메시지 전달 방식 — redis(기본) 또는 memory(Redis 없는 PC 앱 배포용)임.
+// 오타가 조용히 redis로 폴백되면 PC 앱이 없는 Redis에 붙으려 하므로 fail-fast 처리함
+const messageBusRaw = process.env.MESSAGE_BUS || 'redis';
+if (messageBusRaw !== 'redis' && messageBusRaw !== 'memory') {
+  throw new Error(
+    `Critical Error: MESSAGE_BUS는 redis 또는 memory여야 합니다. (현재: ${messageBusRaw})`
+  );
+}
+const messageBus: 'redis' | 'memory' = messageBusRaw;
+
 // 4. 설정 객체 내보내기
 export const config = {
   env: nodeEnv,
@@ -69,6 +79,7 @@ export const config = {
     expiresIn: process.env.JWT_EXPIRES_IN as string,
   },
   isProduction: nodeEnv === 'production',
+  messageBus,
   redis: {
     url:
       process.env.REDIS_URL ||

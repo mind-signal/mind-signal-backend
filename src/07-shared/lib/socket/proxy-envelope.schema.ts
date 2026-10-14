@@ -52,3 +52,18 @@ export const ProxySampleSchema = z.object({
 });
 
 export type ProxySample = z.infer<typeof ProxySampleSchema>;
+
+/**
+ * proxy가 `proxy:status`로 보내는 헤드셋 상태 통보 스키마.
+ *
+ * 엔진이 Redis에 직접 보내던 headset_status 경보를 Redis 없는 구성에서
+ * 프록시 경유로 받기 위한 계약임. subject_idx 범위는 ProxySampleSchema와 같음.
+ */
+export const ProxyStatusSchema = z.object({
+  group_id: z.string().min(1),
+  subject_idx: z.number().int().min(1).max(2),
+  status: z.string(),
+  silent_seconds: z.number().optional(),
+});
+
+export type ProxyStatus = z.infer<typeof ProxyStatusSchema>;

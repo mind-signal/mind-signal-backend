@@ -4,7 +4,15 @@ import { Server, Socket } from 'socket.io';
 import { config } from '@07-shared/config/config';
 import { OPERATOR_SOCKET_TOKEN_TYPE } from '@07-shared/constants/operator-socket-token';
 import { redisService } from '@07-shared/lib/redis';
-import { ProxySampleSchema } from './proxy-envelope.schema';
+import { ProxySampleSchema, ProxyStatusSchema } from './proxy-envelope.schema';
+
+/**
+ * /proxy 수신 요약을 남기는 주기(ms).
+ *
+ * 샘플은 subject당 1Hz라 샘플마다 찍으면 로그가 못 쓰게 커진다. 필요한 것은
+ * "이 subject가 지금도 들어오고 있나"이므로 창 단위 집계로 충분하다.
+ */
+const PROXY_SUMMARY_INTERVAL_MS = 10_000;
 
 /**
  * 운영자 전용 room 이름 생성함.
@@ -185,6 +193,53 @@ export class SocketService {
 
     nsp.on('connection', (socket: Socket) => {
       console.log(`[/proxy] connected: ${socket.id}`);
+      // 이 소켓이 이번 창에서 받은 것과 publish한 채널을 subject별로 센다.
+      // 2026-09-03에 subject 1이 화면에서 사라졌을 때 여기에 로그가 없어
+      // "프록시가 안 보냈나 / BE가 안 받았나 / 아무도 안 듣는 채널에 실었나"를
+      // 가르지 못했다. 특히 채널명은 group_id 불일치를 드러내는 유일한 단서다.
+      const window = new Map<
+        number,
+        {
+          received: number;
+          published: number;
+          invalid: number;
+          channels: Set<string>;
+        }
+      >();
+      const tallyFor = (subjectIndex: number) => {
+        let t = window.get(subjectIndex);
+        if (!t) {
+          t = {
+            received: 0,
+            published: 0,
+            invalid: 0,
+            channels: new Set<string>(),
+          };
+          window.set(subjectIndex, t);
+        }
+        return t;
+      };
+      const summaryTimer = setInterval(() => {
+        if (window.size === 0) return;
+        for (const [subjectIndex, t] of [...window.entries()].sort(
+          (a, b) => a[0] - b[0]
+        )) {
+          console.log(
+            `[/proxy] summary subject=${subjectIndex} received=${t.received} ` +
+              `published=${t.published} invalid=${t.invalid} ` +
+              `channels=[${[...t.channels].join(',')}]`
+          );
+          // 값만 비우고 키는 남긴다. 0으로 떨어진 subject가 목록에서 사라지면
+          // 침묵과 정상을 구분할 수 없다.
+          window.set(subjectIndex, {
+            received: 0,
+            published: 0,
+            invalid: 0,
+            channels: new Set<string>(),
+          });
+        }
+      }, PROXY_SUMMARY_INTERVAL_MS);
+      summaryTimer.unref?.();
 
       // proxy:sample 이벤트 - envelope 검증 후 Redis publish로 aligner 경로에 합류시킴 (Phase 18.2)
       socket.on(
@@ -199,7 +254,16 @@ export class SocketService {
         ) => {
           const parsed = ProxySampleSchema.safeParse(envelope);
           if (!parsed.success) {
-            // 형태 오류는 재시도 무의미함 - non-retryable drop 반환함
+            // 형태 오류는 재시도 무의미함 - non-retryable drop 반환함.
+            // 어느 필드가 틀렸는지 남기지 않으면 프록시 쪽 drop 로그만으로는
+            // 원인을 못 찾는다. 프레임 자체는 싣지 않는다(용량과 개인정보).
+            console.warn(
+              '[/proxy] invalid_frame:',
+              parsed.error.issues
+                .map((i) => `${i.path.join('.')}: ${i.message}`)
+                .join('; ')
+            );
+            tallyFor(-1).invalid++;
             ack?.({ ok: false, retryable: false, error: 'invalid_frame' });
             return;
           }
@@ -211,6 +275,7 @@ export class SocketService {
             metrics,
           } = parsed.data;
           const channel = `mind-signal:${groupId}:subject:${subjectIndex}`;
+          tallyFor(subjectIndex).received++;
           try {
             // redisService.client는 publish 전용 - 모든 subscribe는 duplicate() 경유라
             // 이 공유 client는 PubSub 모드에 진입하지 않음 (measurement.service.ts 정합).
@@ -225,6 +290,13 @@ export class SocketService {
                 ...(metrics ? { metrics } : {}),
               })
             );
+            // await 사이에 요약 타이머가 돌면 위에서 잡아 둔 tally 객체는
+            // 맵에서 교체된 뒤다. 그 낡은 객체를 올리면 성공한 publish가
+            // 다음 요약에서 사라진다. 성공 시점에 다시 조회함 (CodeRabbit PR #102).
+            // 채널도 여기서 기록해 실패한 publish가 성공처럼 보이지 않게 함
+            const publishedTally = tallyFor(subjectIndex);
+            publishedTally.published++;
+            publishedTally.channels.add(channel);
             ack?.({ ok: true });
           } catch (err) {
             // Redis 일시 장애는 재시도 허용함 - 소켓은 죽이지 않음
@@ -234,8 +306,60 @@ export class SocketService {
         }
       );
 
-      socket.on('disconnect', () => {
-        console.log(`[/proxy] disconnected: ${socket.id}`);
+      // proxy:status 이벤트 - 헤드셋 상태 통보를 엔진의 직접 publish와 같은 형태로
+      // 같은 채널에 실음. Redis 없는 구성에서 엔진 경보가 지나는 유일한 경로임
+      socket.on(
+        'proxy:status',
+        async (
+          envelope: unknown,
+          ack?: (response: {
+            ok: boolean;
+            retryable?: boolean;
+            error?: string;
+          }) => void
+        ) => {
+          const parsed = ProxyStatusSchema.safeParse(envelope);
+          if (!parsed.success) {
+            console.warn(
+              '[/proxy] invalid_status:',
+              parsed.error.issues
+                .map((i) => `${i.path.join('.')}: ${i.message}`)
+                .join('; ')
+            );
+            ack?.({ ok: false, retryable: false, error: 'invalid_frame' });
+            return;
+          }
+
+          const {
+            group_id: groupId,
+            subject_idx: subjectIndex,
+            status,
+            silent_seconds: silentSeconds,
+          } = parsed.data;
+          const channel = `mind-signal:${groupId}:subject:${subjectIndex}`;
+          try {
+            // silentSeconds가 undefined면 JSON.stringify가 키를 생략함
+            await redisService.client.publish(
+              channel,
+              JSON.stringify({
+                type: 'headset_status',
+                status,
+                subjectIndex,
+                groupId,
+                silentSeconds,
+              })
+            );
+            ack?.({ ok: true });
+          } catch (err) {
+            console.error(`[/proxy] status publish 실패 ${channel}:`, err);
+            ack?.({ ok: false, retryable: true, error: 'publish_failed' });
+          }
+        }
+      );
+
+      socket.on('disconnect', (reason: string) => {
+        clearInterval(summaryTimer);
+        console.log(`[/proxy] disconnected: ${socket.id} reason=${reason}`);
       });
     });
   }

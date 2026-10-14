@@ -4,9 +4,16 @@
 
 - `main` is protected — never commit directly.
 - Feature branches PR into `dev`; `dev` → `main` merges follow the team release cadence.
-- Naming:
-  - Feature (Work ID required — see `AGENTS.md` §11 for what a Work ID is): `feat/{domain-wNNN}-{slug}` — e.g. `feat/auth-w001-realtime-channel-auth`
-  - Fix, hotfix, refactor, docs, chore (no Work ID, short slug): `fix/{slug}`, `hotfix/{slug}`, `refactor/{slug}`, `docs/{slug}`, `chore/{slug}` — e.g. `fix/measurement-complete-handler-cleanup`
+- Branch naming (product-wide rule; canonical text: `mind-signal/.plans/README.md`, section "브랜치 이름"; see `AGENTS.md` §11 for what a Work ID is):
+  - If the work falls within the scope and completion criteria of a registered Work, use `{type}/{work-id}-{slug}` for any type. `{work-id}` is the full Work ID in lowercase. Examples from the merge history: `feat/ops-w013-message-bus-memory`, `fix/session-w005-subscriber-leak`, `docs/docs-w010-agent-docs-restructure`
+  - If the work has no Work affiliation, use `{type}/{slug}` or `{type}/{issue-number}-{slug}` (format examples: `fix/readme-link`, `fix/123-readme-link`). The `#` before the issue number is optional: `fix/#123-readme-link` is the same format.
+  - Never use an issue number in place of the Work ID on a branch that belongs to a Work; link the issue from the PR body.
+  - One branch carries one Work. If you implement several Works, use one branch per Work.
+  - Do not use the ID of a closed Work on a new branch. For work that fixes the result of a closed Work, use the new Work ID if you were given one; otherwise use the format for work with no Work affiliation.
+  - Use lowercase English letters, digits, and hyphens for `{slug}`. It may differ from the Work folder slug.
+  - `{type}` is the commit type that matches the final purpose of the work. `hotfix` is an extra branch prefix for urgent production fixes; it is not a commit type. It takes the place of `{type}` and follows the same formats as any other type: `hotfix/{work-id}-{slug}` for work that belongs to a Work, `hotfix/{slug}` or `hotfix/{issue-number}-{slug}` otherwise.
+  - If the product plan files (`mind-signal/.plans/`) are unavailable, decide by the Work ID and scope you were given. If no Work ID was given, use the format for work with no Work affiliation.
+  - `main` and `dev` are integration branches and keep their names; release PRs go from `dev` to `main`. Do not rename existing branches because of this rule. If the Work affiliation changes after the branch is created, record it in the PR body and keep the branch name.
 
 ## Commit convention — Conventional Commits 1.0
 
@@ -40,7 +47,7 @@ Each atomic task is one commit — no "WIP", "misc", or "fix fix" commits. One P
 
 ## No direct commits to main
 
-Flow: `feat/... → PR → dev → PR → main`. Force-pushing `main` is prohibited under any circumstance; use `git reset --soft HEAD~N` locally before the first push if history needs rewriting.
+Flow: `work branch → PR → dev → PR → main`. Force-pushing `main` is prohibited under any circumstance; use `git reset --soft HEAD~N` locally before the first push if history needs rewriting.
 
 ## Co-authored-by
 
@@ -91,7 +98,7 @@ Never commit if any step fails — fix the root cause, then recommit.
 
 `.github/workflows/ci.yml` triggers on push to `main`, `dev`, and `feat/**`/`fix/**`/`docs/**`/`refactor/**`, and on PRs into `main`/`dev`. A branch push already runs the full pipeline — you don't need to open a PR just to see CI results, but a PR is still required to merge.
 
-**Exception**: `hotfix/**` and `chore/**` are not in the `push.branches` list — pushing to those branches does not trigger CI. Open a PR into `dev`/`main` to get verification on this work.
+**Exception**: only the four prefixes above are in the `push.branches` list. Pushing to a branch with any other prefix (`hotfix/**`, `chore/**`, `test/**`, `ci/**`, `revert/**`, `perf/**`, `style/**`) does not trigger CI. Open a PR into `dev`/`main` to get verification on this work.
 
 ## Merge strategy
 

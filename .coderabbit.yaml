@@ -11,13 +11,29 @@ reviews:
       - dev
   ignore_formatting: true
   path_instructions:
-    - path: "src/routes/**"
+    - path: "**"
+      instructions: |
+        확정된 설계 결정이다. 아래를 되돌리라는 제안은 하지 말 것 — 근거는
+        계획 문서에 있으나 그 문서는 git 밖이라 이 레포에서 확인할 수 없다.
+
+        - 관리자 판정은 ADMIN_EMAILS allowlist 로 확정했다. User 스키마에 role
+          필드를 추가하는 안은 기각됐다. role 필드 도입을 제안하지 말 것.
+        - 소켓 인증은 전용 토큰 발급 방식으로 확정했고 구현이 끝났다.
+        - CHAT_ONLY_MODE 가 production 에서 true 면 기동을 거부하는 가드는 의도된
+          것이다. 완화를 제안하지 말 것 — 그 값이 운영에 남으면 auth 와 측정과
+          분석 API 가 통째로 언마운트된 채 정상 기동한 것처럼 보인다.
+        - config 에서 BEDROCK_INFERENCE_PROFILE_ID 폴백에 || 를 쓰는 것은 의도다.
+          ?? 로 바꾸면 빈 문자열이 폴백하지 않아 챗봇이 조용히 죽는다.
+        - 디렉터리는 번호 접두 레이어(01-app, 02-processes, 05-features,
+          06-entities, 07-shared)다. src/routes 나 src/services 같은 평면 구조를
+          전제한 지적을 하지 말 것.
+    - path: "src/02-processes/**/api/**"
       instructions: |
         Controller(라우트) 규칙:
         - 비즈니스 로직 금지 — Service 위임 필수.
         - 직접 DB 접근(Mongoose 모델 호출) 금지.
         - 에러를 조용히 삼키는(catch 후 무시) 패턴 지적.
-    - path: "src/services/**"
+    - path: "src/**/services/**"
       instructions: |
         Service 규칙:
         - Controller를 import하면 위반 (역방향 의존 금지).
@@ -35,3 +51,13 @@ reviews:
         포매팅 무시.
 chat:
   auto_reply: true
+
+# --- 2026-08-27 추가: 프로젝트 컨텍스트 학습 ---
+# 기본 code_guidelines 패턴은 CLAUDE.md 를 읽는데 이 레포의 CLAUDE.md 는
+# `@AGENTS.md` 한 줄 import 껍데기라 실질적으로 빈 파일이었다. 직접 가리킨다.
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - ".agents/rules/*.md"

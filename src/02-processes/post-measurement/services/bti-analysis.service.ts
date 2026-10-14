@@ -1,7 +1,7 @@
 import { Session } from '@06-entities/sessions';
 import { AnalysisResult } from '@06-entities/analysis-results';
 import { EegRecord } from '@06-entities/eeg-records';
-import { Consent } from '@06-entities/consents';
+import { consentRepository } from '@06-entities/consents';
 import { engineProxyService } from '@02-processes/engine/services/engine-proxy.service';
 
 /**
@@ -44,7 +44,7 @@ export const runBTIAnalysisPipeline = async (
 
   // EegRecord 1건 생성함. 경로와 분석 대상이 어긋나지 않도록 같은
   // subjectIndex로 둘 다 결정함
-  const consent1 = await Consent.findOne({ userId: user1Id });
+  const consent1 = await consentRepository.ensureConsent(user1Id);
   const record1Doc: any = {
     userId: user1Id,
     sessionId: targetSession._id,

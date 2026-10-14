@@ -16,7 +16,14 @@ export type ConsentModel = Model<Consent, {}, ConsentMethods>;
 /** 2. 스키마 정의 */
 const consentSchema = new Schema<Consent, ConsentModel, ConsentMethods>(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    // unique — ensureConsent의 upsert가 동시에 들어와도 문서가 하나로 유지됨.
+    // 인덱스가 없으면 두 upsert가 서로의 문서를 못 보고 각각 삽입함
+    userId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      unique: true,
+    },
     // versionId는 ObjectId가 아닌 ConsentVersion의 커스텀 ID를 참조함
     versionId: { type: String, required: true },
     isResearchAgreed: { type: Boolean, default: false },

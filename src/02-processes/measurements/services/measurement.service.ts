@@ -1,5 +1,6 @@
 import { Session } from '@06-entities/sessions';
 import { redisService } from '@07-shared/lib/redis';
+import type { BusSubscriber } from '@07-shared/lib/redis';
 import { BrainSyncAllSchema, SocketService } from '@07-shared/lib/socket';
 import { AppError } from '@07-shared/errors';
 import { engineRegistryService } from '@02-processes/engine/services/engine-registry.service';
@@ -8,7 +9,6 @@ import { timestampAlignerRegistry } from './timestamp-aligner.service';
 import { stimulusBroadcasterService } from './stimulus-broadcaster.service';
 import type { SubjectSample } from './timestamp-aligner.service';
 import { StreamHealthTracker } from './stream-health.service';
-import { RedisClientType } from 'redis';
 import { config } from '@07-shared/config/config';
 
 // ---------------------------------------------------------------------------
@@ -25,20 +25,32 @@ export type StartMeasurementResult =
 // ---------------------------------------------------------------------------
 
 /** Redis 구독자 레지스트리 — 키: `${groupId}:${subjectIndex}` */
-const subscriberRegistry = new Map<string, RedisClientType>();
+const subscriberRegistry = new Map<string, BusSubscriber>();
 
 // ---------------------------------------------------------------------------
 // 모듈 레벨 구독자 레지스트리 — DUAL_2PC 경로 (v7 H-1 반영)
 // ---------------------------------------------------------------------------
 
 /** DUAL_2PC groupId별 Redis 구독자 목록 — cleanup 시 unsubscribe 필요 */
-const groupSubscribers = new Map<string, RedisClientType[]>();
+const groupSubscribers = new Map<string, BusSubscriber[]>();
 
 /** DUAL_2PC groupId별 flush setInterval 핸들러 — unsubscribeGroupChannels에서 clearInterval */
 const groupFlushIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
 /** DUAL_2PC groupId별 스트림 건강 추적기 — unsubscribeGroupChannels에서 제거 */
 const groupHealthTrackers = new Map<string, StreamHealthTracker>();
+
+/** groupId → (subjectIndex → 이번 창에서 받은 샘플 수). 요약 로그 전용임 */
+const groupReceivedCounts = new Map<string, Map<number, number>>();
+
+/**
+ * 구독 수신 요약을 남기는 주기(ms).
+ *
+ * flush 타이머(100ms)에 얹어 별도 타이머를 만들지 않는다. 샘플은 subject당 1Hz라
+ * 샘플마다 찍으면 로그가 못 쓰게 커지고, 필요한 것은 "이 subject가 지금도
+ * 들어오고 있나"뿐이다. /proxy 요약과 같은 주기라 두 로그를 나란히 읽을 수 있다.
+ */
+const SUBSCRIBE_SUMMARY_INTERVAL_MS = 10_000;
 
 /** 진행 중인 DUAL_2PC 측정 groupId — 중복 트리거 차단 */
 const dualMeasurementInFlight = new Set<string>();
@@ -66,16 +78,38 @@ export const resetActiveDualGroup = (): void => {
  * @param groupId - 실험 그룹 ID
  */
 async function subscribeWithAligner(groupId: string): Promise<void> {
-  const subscribers: RedisClientType[] = [];
+  const subscribers: BusSubscriber[] = [];
+  // SESSION-W005: 배열을 비어 있을 때 미리 등록함. 참조를 공유하므로 push 즉시
+  // 추적됨 — 루프 끝에서 등록하면 두 번째 구독자가 실패할 때 첫 번째가 어느
+  // 맵에도 없는 고아가 되어 unsubscribeGroupChannels가 찾지 못함
+  groupSubscribers.set(groupId, subscribers);
   const healthTracker = new StreamHealthTracker(groupId);
   groupHealthTrackers.set(groupId, healthTracker);
+
+  // 수신 카운터를 구독 전에 subject 1과 2 모두 0으로 등록함. 콜백에서 처음 받을
+  // 때 키를 만들면 한 번도 샘플을 못 보낸 subject가 요약에서 통째로 빠져
+  // 침묵이 보이지 않음 — 이 로그를 넣은 목적이 사라짐 (CodeRabbit PR #102)
+  const received = new Map<number, number>([
+    [1, 0],
+    [2, 0],
+  ]);
+  groupReceivedCounts.set(groupId, received);
 
   // v7 H-PREP-1: subjectIndex는 1-based
   // 기존 Redis 채널 규칙(`mind-signal:{groupId}:subject:{subjectIndex}`) 그대로 유지
   for (const subjectIndex of [1, 2]) {
-    const subscriber = redisService.client.duplicate() as RedisClientType;
+    const subscriber = redisService.client.duplicate();
     await subscriber.connect();
+    // SESSION-W005 후속: connect 직후에 등록함. subscribe 뒤에 등록하면 구독에
+    // 실패한 구독자가 TCP 를 연 채 배열에 없어 회수 대상에서 빠진다.
+    // "배열에 있음 = 연결이 존재함" 불변식을 유지해 회수 책임을
+    // unsubscribeGroupChannels 한 곳에 남긴다
+    subscribers.push(subscriber);
     const channel = `mind-signal:${groupId}:subject:${subjectIndex}`;
+    // 구독 채널명을 남긴다. /proxy 핸들러가 publish한 채널명과 나란히 놓으면
+    // group_id 불일치(아무도 듣지 않는 채널로 발행)가 바로 갈린다.
+    // 2026-09-03에 이 대조가 불가능해 subject 1 실종 원인을 특정하지 못했다.
+    console.log(`DUAL_2PC subscribe ${channel}`);
     await subscriber.subscribe(channel, (message: string) => {
       try {
         const parsed = JSON.parse(message);
@@ -109,6 +143,9 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
           ...(frame.data.metrics ? { metrics: frame.data.metrics } : {}),
         };
         healthTracker.recordSample(subjectIndex, serverTimestamp);
+        const counts = groupReceivedCounts.get(groupId);
+        if (counts)
+          counts.set(subjectIndex, (counts.get(subjectIndex) ?? 0) + 1);
         timestampAlignerRegistry.ingest(
           groupId,
           subjectIndex,
@@ -119,16 +156,29 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
         console.error(`DUAL_2PC ${channel} parse error:`, err);
       }
     });
-    subscribers.push(subscriber);
   }
-  groupSubscribers.set(groupId, subscribers);
 
   // v9 R9-H-2: flush 호출 주체는 subscribeWithAligner 내부 setInterval(100)
   // unsubscribeGroupChannels에서 clearInterval 처리
+  // subject별 수신 건수를 창 단위로 집계해 요약 로그로 낸다. 구독자 콜백에서
+  // 세고 flush 타이머가 주기적으로 비운다. 0으로 떨어진 subject도 계속 보고해야
+  // 침묵과 정상이 구분되므로 키는 지우지 않는다.
+  let lastSummaryAt = Date.now();
+
   const intervalId = setInterval(() => {
     timestampAlignerRegistry.flush(groupId);
     // DE 프로세스가 죽으면 watchdog 스레드도 함께 사라지므로 BE가 독립 감지함
     healthTracker.checkStale(Date.now());
+
+    const now = Date.now();
+    if (now - lastSummaryAt >= SUBSCRIBE_SUMMARY_INTERVAL_MS) {
+      lastSummaryAt = now;
+      const parts = [...received.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([idx, count]) => `subject${idx}=${count}`);
+      console.log(`DUAL_2PC ${groupId} 수신 요약 ${parts.join(' ')}`);
+      for (const key of received.keys()) received.set(key, 0);
+    }
   }, 100);
   // process 종료 시 flush 타이머가 Jest/Node를 block하지 않도록 unref 적용함
   intervalId.unref();
@@ -149,6 +199,11 @@ async function unsubscribeGroupChannels(groupId: string): Promise<void> {
     groupFlushIntervals.delete(groupId);
   }
 
+  // SESSION-W005: 건강 추적기는 구독자보다 먼저 등록되므로, 구독자 목록이
+  // 없다고 조기 반환하면 추적기가 남는다. 반환 전에 먼저 지움
+  groupHealthTrackers.delete(groupId);
+  groupReceivedCounts.delete(groupId);
+
   const subscribers = groupSubscribers.get(groupId);
   if (!subscribers) return;
   for (const subscriber of subscribers) {
@@ -161,6 +216,7 @@ async function unsubscribeGroupChannels(groupId: string): Promise<void> {
   }
   groupSubscribers.delete(groupId);
   groupHealthTrackers.delete(groupId);
+  groupReceivedCounts.delete(groupId);
 }
 
 /**
@@ -333,8 +389,40 @@ function startDualMeasurement(groupId: string): void {
       // 2026-08-05 실기기 회차에서 이 catch가 탔으나 어디에도 흔적이 없어
       // 원인 특정에 실패함 (backend #89)
       console.error(`[DUAL_2PC 실패] groupId=${groupId}`, err);
+
+      // SESSION-W005: 이미 시작된 원격 엔진을 먼저 세움. cleanupGroup이
+      // dualRegistry를 지우면 streamStop이 engineUrl을 찾지 못해 legacy 폴백
+      // 503이 되므로, 반드시 cleanupGroup보다 앞이어야 함.
+      // 애초에 시작하지 못한 엔진이거나 이미 죽었을 수 있어 실패는 흡수함.
+      // 등록된 subject만 대상으로 함 — dualRegistry에 그룹이 없으면
+      // streamStop이 legacy 단일 슬롯 URL로 폴백해(engine-proxy.service.ts:194-199)
+      // 무관한 1PC 측정에 종료 요청이 나감. getEngineUrl은 슬롯이 비었을 때만
+      // 503을 던지므로(engine-registry.service.ts:49-53) 차 있으면 실제로 나감
+      const registrations = engineRegistryService.getByGroup(groupId);
+      if (registrations) {
+        const { engineProxyService: proxyForStop } =
+          await import('@02-processes/engine/services/engine-proxy.service');
+        for (const subjectIndex of registrations.keys()) {
+          try {
+            await proxyForStop.streamStop(groupId, subjectIndex);
+          } catch (stopErr) {
+            console.warn(
+              `[DUAL_2PC 실패] subject ${subjectIndex} streamStop 실패 (무시)`,
+              stopErr
+            );
+          }
+        }
+      }
+
+      // SESSION-W005: 정상 종료 경로(:182-184)는 셋을 다 회수하는데 이 catch는
+      // cleanupGroup 하나만 불러 flush interval과 구독자와 aligner가 잔존했음.
+      // 취소 뒤에도 checkStale이 계속 돌아 유령 stale 배너가 뜬 원인
+      await unsubscribeGroupChannels(groupId);
+      timestampAlignerRegistry.cleanup(groupId);
+
       // T4 fix: 반쪽 등록 잔류 방지 — dualRegistry cleanup 호출함 (LD-4)
       engineRegistryService.cleanupGroup(groupId);
+      dualTriggerService.resetStatus(groupId);
       // 실패 통보 (60초 timeout + streamStart 실패 포함)
       SocketService.emitToGroup(groupId, 'dual-session-failed', {
         groupId,
@@ -453,7 +541,7 @@ export const startMeasurementService = async (
 
   // 구독자 레지스트리에 등록함
   const registryKey = `${session.groupId}:${session.subjectIndex}`;
-  subscriberRegistry.set(registryKey, subscriber as unknown as RedisClientType);
+  subscriberRegistry.set(registryKey, subscriber);
 
   const channel = `mind-signal:${session.groupId}:subject:${session.subjectIndex}`;
   await subscriber.subscribe(channel, (message: string) => {
@@ -579,6 +667,9 @@ export const stopMeasurementService = async (
       });
       timestampAlignerRegistry.cleanup(session.groupId);
       engineRegistryService.cleanupGroup(session.groupId);
+      // registry-status 캐시(ready=true)는 GC 30분까지 남아, 종료된 그룹을
+      // 새로고침으로 복원한 운영자 화면에 `실험 시작`이 다시 뜸 (2026-09-07)
+      dualTriggerService.resetStatus(session.groupId);
       // subscribeWithAligner가 생성한 Redis subscriber 2개 + flush interval 전부 해제
       await unsubscribeGroupChannels(session.groupId);
     }

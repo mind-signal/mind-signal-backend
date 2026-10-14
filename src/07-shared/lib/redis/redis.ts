@@ -1,18 +1,31 @@
-import { createClient, RedisClientType } from 'redis';
+import { createClient } from 'redis';
 import { config } from '@07-shared/config/config';
+import { MemoryBusClient } from './memory-bus';
+import type { BusClient } from './message-bus.types';
 
 class RedisService {
   private static instance: RedisService;
-  public client: RedisClientType;
+  public client: BusClient;
 
   private constructor() {
+    // MESSAGE_BUS=memory면 Redis 클라이언트를 만들지 않음 (연결 시도 0회).
+    // 호출부가 쓰는 메서드만 구현한 프로세스 내부 버스로 대체하며, 호출부를
+    // 두 모드에서 같게 유지함. 두 구현 모두 BusClient를 만족함
+    if (config.messageBus === 'memory') {
+      this.client = new MemoryBusClient();
+      return;
+    }
+
     // 2. process.env 대신 config 객체 사용 (REDIS_URL 우선, 없으면 HOST/PORT 폴백)
     const { url } = config.redis;
 
-    this.client = createClient({ url });
+    // on()은 BusClient에 없는 Redis 전용 동작이라 구체 타입 변수로 등록함
+    const client = createClient({ url });
 
-    this.client.on('error', (err) => console.error('Redis Client Error', err));
-    this.client.on('connect', () => console.log('Redis Client Connected'));
+    client.on('error', (err) => console.error('Redis Client Error', err));
+    client.on('connect', () => console.log('Redis Client Connected'));
+
+    this.client = client;
   }
 
   /**

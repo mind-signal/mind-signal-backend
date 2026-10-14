@@ -14,7 +14,7 @@ import { Session } from '@06-entities/sessions';
 import { AnalysisResult } from '@06-entities/analysis-results';
 import { MatchingPool } from '@06-entities/matching-pools';
 import { EegRecord } from '@06-entities/eeg-records';
-import { Consent } from '@06-entities/consents';
+import { consentRepository } from '@06-entities/consents';
 import { engineProxyService } from '@02-processes/engine/services/engine-proxy.service';
 
 jest.mock('@06-entities/sessions', () => ({ Session: { find: jest.fn() } }));
@@ -35,7 +35,9 @@ jest.mock('@06-entities/eeg-records', () => ({
     findByIdAndUpdate: jest.fn(),
   },
 }));
-jest.mock('@06-entities/consents', () => ({ Consent: { findOne: jest.fn() } }));
+jest.mock('@06-entities/consents', () => ({
+  consentRepository: { ensureConsent: jest.fn() },
+}));
 jest.mock('@02-processes/engine/services/engine-proxy.service', () => ({
   engineProxyService: { analyzePipeline: jest.fn() },
 }));
@@ -58,7 +60,9 @@ const mockSessions = () => {
 beforeEach(() => {
   jest.clearAllMocks();
   mockSessions();
-  (Consent.findOne as jest.Mock).mockResolvedValue(null);
+  (consentRepository.ensureConsent as jest.Mock).mockResolvedValue({
+    _id: 'consent_1',
+  });
   (EegRecord.findOneAndUpdate as jest.Mock).mockImplementation((filter) =>
     Promise.resolve({ _id: `record_${filter.sessionId}` })
   );

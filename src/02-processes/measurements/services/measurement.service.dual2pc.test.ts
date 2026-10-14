@@ -74,6 +74,14 @@ describe('measurement.service.ts — BE-3: DUAL_2PC 분기 정적 검증', () =>
   it('DUAL_2PC allCompleted 시 aligner cleanup 호출됨 (v7 H-2 반영)', () => {
     expect(source).toContain('timestampAlignerRegistry.cleanup');
     expect(source).toContain('engineRegistryService.cleanupGroup');
+    // registry-status 캐시(ready=true)가 GC 30분까지 남아 종료된 그룹에
+    // `실험 시작`이 다시 뜨던 결함 — 종료 경로에서 반드시 지움 (2026-09-07).
+    // 실패 catch 에도 같은 호출이 있어 파일 전체 검색은 이 분기 삭제를 못 잡음.
+    // stopMeasurementService 본문으로 범위를 좁힘 (CodeRabbit #106)
+    const stopBody = source.slice(
+      source.indexOf('export const stopMeasurementService')
+    );
+    expect(stopBody).toContain('dualTriggerService.resetStatus');
   });
 
   it('v9 R9-H-2: subscribeWithAligner 내부 setInterval flush 기동됨', () => {

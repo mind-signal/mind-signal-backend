@@ -113,22 +113,21 @@ class TimestampAligner {
    *
    * - |ts_1 - ts_2| ≤ toleranceMs 인 쌍 생성
    * - AlignedSample.subject_1 / subject_2 필드로 매핑 (1-based)
-   * - 매칭 실패 샘플은 Date.now() - ts > 500ms 시 drop (timestamp_min-aged)
+   * - 매칭 실패 샘플은 toleranceMs 초과 대기 시 상대를 null 로 두고 단독 emit
    * - 정렬된 쌍은 SocketService.emitToGroup(groupId, 'aligned_pair', alignedSample) 전송
    *
    * @returns 정렬된 AlignedSample 배열
    */
   flush(): AlignedSample[] {
     const now = Date.now();
-    const expireThresholdMs = 500;
     const aligned: AlignedSample[] = [];
 
-    const buf1 = this.buffer.get(1) ?? [];
-    const buf2 = this.buffer.get(2) ?? [];
-
-    // 만료 항목 drop — 매칭 실패 샘플 Date.now() - ts > 500ms 시 제거
-    const fresh1 = buf1.filter((e) => now - e.ts <= expireThresholdMs);
-    const fresh2 = buf2.filter((e) => now - e.ts <= expireThresholdMs);
+    // 만료 drop 없음. 미매칭 샘플은 아래 단독 emit 이 tolerance 초과 즉시
+    // 내보내므로 버퍼가 쌓이지 않음. 이전의 500ms 만료 필터는 이벤트 루프가
+    // 잠깐 멈추면 샘플이 tolerance 창을 건너뛰어 조용히 사라지는 구멍이었음
+    // (CodeRabbit #106)
+    const fresh1 = this.buffer.get(1) ?? [];
+    const fresh2 = this.buffer.get(2) ?? [];
 
     // 그리디 매칭: buf1 각 항목에 대해 toleranceMs 내 buf2 최근접 항목 탐색
     // 매칭 여부를 인덱스로 추적하여 버퍼 업데이트에 활용함
@@ -169,36 +168,62 @@ class TimestampAligner {
       }
     }
 
-    // 미매칭 항목만 버퍼에 유지 — 만료 항목(fresh 필터에서 제외된 것)은 자동 drop됨
+    // 미매칭 항목만 남김
     const newBuf1 = fresh1.filter((_, idx) => !usedIdx1.has(idx));
     const newBuf2 = fresh2.filter((_, idx) => !usedIdx2.has(idx));
 
-    // 단일 헤드셋 지원 — subject 1이 버퍼에 없고, subject 2 샘플이 페어링 윈도
-    // (toleranceMs) 를 넘겨 대기한 경우에만 단독 emit함. buffer 비움이 아니라
-    // "tolerance 초과 미매칭"을 신호로 써서 subject 1의 일시적 지연을 single-headset
-    // 으로 오판하지 않음 (CodeRabbit #68). 윈도 내 어린 샘플은 유지해 late pair 허용.
-    const keptBuf2: BufferEntry[] = [];
-    for (const entry2 of newBuf2) {
-      if (newBuf1.length === 0 && now - entry2.ts > this.toleranceMs) {
+    // 단독 emit — 페어링 윈도(toleranceMs)를 넘겨 대기한 미매칭 샘플은 혼자
+    // 내보냄. ingest 시각은 서버 Date.now() 라 단조 증가하므로, tolerance 를
+    // 넘긴 샘플은 앞으로 올 어떤 파트너와도 맞을 수 없음. 윈도 내 어린 샘플은
+    // 유지해 late pair 허용 (CodeRabbit #68 — 일시 지연을 single-headset 으로
+    // 오판하지 않음).
+    //
+    // 상대 버퍼 비움을 조건으로 걸지 않음. 2026-09-07 2PC 측정에서 두 엔진이
+    // 300ms 위상 차로 계속 들어오자 상대 버퍼가 비는 순간이 없어 먼저 온
+    // subject 1 이 매번 500ms 만료로 drop 되고 화면이 STALE 이 됐음 (BE 수신은
+    // 정상). 옛 코드는 그 조건에 더해 subject 2 에만 분기가 있었음.
+    const keptBuf1 = this.emitSolo(newBuf1, 1, now, aligned);
+    const keptBuf2 = this.emitSolo(newBuf2, 2, now, aligned);
+
+    this.buffer.set(1, keptBuf1);
+    this.buffer.set(2, keptBuf2);
+
+    return aligned;
+  }
+
+  /**
+   * 미매칭 샘플 중 tolerance 를 초과 대기한 것을 단독 emit함.
+   *
+   * @param own - 이 subject 의 미매칭 버퍼
+   * @param subjectIndex - 1 또는 2 (1-based)
+   * @param now - flush 시각
+   * @param aligned - emit 된 샘플을 누적할 배열
+   * @returns 단독 emit 되지 않고 버퍼에 남길 항목
+   */
+  private emitSolo(
+    own: BufferEntry[],
+    subjectIndex: 1 | 2,
+    now: number,
+    aligned: AlignedSample[]
+  ): BufferEntry[] {
+    const kept: BufferEntry[] = [];
+    for (const entry of own) {
+      if (now - entry.ts > this.toleranceMs) {
         /* eslint-disable camelcase */
         const sample: AlignedSample = {
           groupId: this.groupId,
-          timestamp_ms: entry2.ts,
-          subject_1: null,
-          subject_2: entry2.sample,
+          timestamp_ms: entry.ts,
+          subject_1: subjectIndex === 1 ? entry.sample : null,
+          subject_2: subjectIndex === 2 ? entry.sample : null,
         };
         /* eslint-enable camelcase */
         aligned.push(sample);
         SocketService.emitToGroup(this.groupId, 'aligned_pair', sample);
       } else {
-        keptBuf2.push(entry2);
+        kept.push(entry);
       }
     }
-
-    this.buffer.set(1, newBuf1);
-    this.buffer.set(2, keptBuf2);
-
-    return aligned;
+    return kept;
   }
 }
 
