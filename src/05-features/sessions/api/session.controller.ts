@@ -24,6 +24,10 @@ import { PairSubjectService } from '@05-features/sessions/services/pair-subject.
 
 /**
  * [Controller] 새로운 그룹 세션 또는 그룹 내 추가 세션 생성 수행함
+ *
+ * @throws AppError 401 - groupId 지정 시 인증 정보가 없을 때
+ * @throws AppError 403 - groupId 지정 시 그 그룹의 생성자가 아닐 때
+ * @throws AppError 404 - groupId 지정 시 그 그룹의 세션이 없을 때
  */
 export const createSession = async (
   req: AuthedRequest,
@@ -33,6 +37,14 @@ export const createSession = async (
   try {
     // 기존 그룹 추가 시 groupId, DUAL_2PC 등 모드 지정 시 experimentMode를 본문에서 받음
     const { groupId, experimentMode } = req.body;
+
+    // 기존 그룹에 세션을 추가할 수 있는 것은 그 그룹을 만든 운영자뿐임
+    if (groupId) {
+      if (!req.user?.id) {
+        throw new AppError('인증이 필요합니다.', 401);
+      }
+      await assertGroupCreator(groupId, req.user.id);
+    }
 
     // 비즈니스 프로세스 호출하여 세션 생성 수행함
     const newSession = await createGroupSessionProcess(

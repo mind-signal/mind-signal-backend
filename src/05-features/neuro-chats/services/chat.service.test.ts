@@ -23,7 +23,14 @@ jest.mock('@06-entities/analysis-results', () => ({
   AnalysisResult: { findOne: jest.fn() },
 }));
 
+jest.mock('@05-features/sessions', () => ({
+  assertGroupOwnership: jest.fn(),
+}));
+
 import { chatService } from './chat.service';
+import { AnalysisResult } from '@06-entities/analysis-results';
+import { assertGroupOwnership } from '@05-features/sessions';
+import { AppError } from '@07-shared/errors';
 
 describe('chatService.callLLM — Amazon Bedrock 연동 검증함', () => {
   beforeEach(() => {
@@ -84,5 +91,85 @@ describe('chatService.callLLM — Amazon Bedrock 연동 검증함', () => {
       url: '',
       level: 3,
     });
+  });
+});
+
+describe('chatService.processMessage — 분석 리포트 소유권 (AUTH-W003)', () => {
+  const GROUP_ID = '65c9f0b2a1b2c3d4e5f67890';
+  const USER_ID = 'operator-1';
+  // search-pre-list 키워드가 없는 문장이어야 조회 단계까지 감
+  const MESSAGE = '내 리포트 요약해 줘';
+  const LLM_RESULT = {
+    status: 'success' as const,
+    message: 'ok',
+    url: '',
+    level: 2 as const,
+  };
+  let callLLM: jest.SpyInstance;
+
+  /** findOne(...).select().lean().exec() 체인 mock 생성함 */
+  const mockFindOneReturning = (doc: { markdown: string } | null) => {
+    (AnalysisResult.findOne as jest.Mock).mockReturnValue({
+      select: () => ({ lean: () => ({ exec: async () => doc }) }),
+    });
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.mocked(assertGroupOwnership).mockReset().mockResolvedValue(undefined);
+    mockFindOneReturning({ markdown: 'REPORT' });
+    callLLM = jest.spyOn(chatService, 'callLLM').mockResolvedValue(LLM_RESULT);
+  });
+
+  afterEach(() => {
+    callLLM.mockRestore();
+  });
+
+  it('C1 — 그룹을 만든 운영자도 groupId 로 리포트를 받음', async () => {
+    await chatService.processMessage(MESSAGE, USER_ID, GROUP_ID);
+
+    expect(assertGroupOwnership).toHaveBeenCalledWith(GROUP_ID, USER_ID);
+    expect(AnalysisResult.findOne).toHaveBeenCalledWith({ groupId: GROUP_ID });
+    expect(callLLM).toHaveBeenCalledWith(MESSAGE, 'REPORT');
+  });
+
+  it('C2 — 그룹과 무관한 사용자는 리포트 없이 답을 받음', async () => {
+    jest
+      .mocked(assertGroupOwnership)
+      .mockRejectedValueOnce(new AppError('권한 없음', 403));
+
+    await chatService.processMessage(MESSAGE, USER_ID, GROUP_ID);
+
+    expect(AnalysisResult.findOne).not.toHaveBeenCalled();
+    expect(callLLM).toHaveBeenCalledWith(MESSAGE, undefined);
+  });
+
+  it('C3 — 세션이 없는 그룹이면 리포트 없이 답을 받음', async () => {
+    jest
+      .mocked(assertGroupOwnership)
+      .mockRejectedValueOnce(new AppError('그룹 없음', 404));
+
+    await chatService.processMessage(MESSAGE, USER_ID, GROUP_ID);
+
+    expect(AnalysisResult.findOne).not.toHaveBeenCalled();
+    expect(callLLM).toHaveBeenCalledWith(MESSAGE, undefined);
+  });
+
+  it('C4 — 소유권 확인 중 DB 오류는 삼키지 않고 전파함', async () => {
+    jest
+      .mocked(assertGroupOwnership)
+      .mockRejectedValueOnce(new Error('db down'));
+
+    await expect(
+      chatService.processMessage(MESSAGE, USER_ID, GROUP_ID)
+    ).rejects.toThrow('db down');
+    expect(callLLM).not.toHaveBeenCalled();
+  });
+
+  it('C5 — 로그인하지 않으면 소유권도 리포트도 조회하지 않음', async () => {
+    await chatService.processMessage(MESSAGE, undefined, GROUP_ID);
+
+    expect(assertGroupOwnership).not.toHaveBeenCalled();
+    expect(AnalysisResult.findOne).not.toHaveBeenCalled();
   });
 });
