@@ -118,6 +118,9 @@ export const config = {
     timestampToleranceMs: Number(
       process.env.DUAL_2PC_TIMESTAMP_TOLERANCE_MS ?? 200
     ),
+    // 단독 emit 전 짝 대기 시간. BE 도착 지연이 tolerance 보다 커도 짝을 맞추려고
+    // 분리함 (EEG-W006 8장). 1인 측정 화면 반영이 최대 이만큼 늦어짐
+    soloWaitMs: Number(process.env.DUAL_2PC_SOLO_WAIT_MS ?? 1000),
     registrationTimeoutMs: Number(
       process.env.DUAL_2PC_REGISTRATION_TIMEOUT_MS ?? 60000
     ),

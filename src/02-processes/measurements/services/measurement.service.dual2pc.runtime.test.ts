@@ -33,6 +33,7 @@ jest.mock('@07-shared/config/config', () => ({
     },
     dualPc: {
       timestampToleranceMs: 200,
+      soloWaitMs: 1000,
       // 짧은 timeout — 테스트 중 의도적 미등록 시나리오에서 빠르게 reject
       registrationTimeoutMs: 5000,
     },
@@ -601,10 +602,12 @@ describe('F1b — startup in-flight 그룹 supersede', () => {
     // NEW만 aligner 생성, OLD는 supersede되어 미생성
     expect(timestampAlignerRegistry.getOrCreate).toHaveBeenCalledWith(
       NEW,
+      expect.anything(),
       expect.anything()
     );
     expect(timestampAlignerRegistry.getOrCreate).not.toHaveBeenCalledWith(
       OLD,
+      expect.anything(),
       expect.anything()
     );
     // superseded OLD 세션은 terminal cleanup(CANCELLED)으로 정리됨 (CodeRabbit #70)
