@@ -184,8 +184,17 @@ async function notifyPipelineFailure(
   console.error(
     `[postMeasurement] groupId=${groupId} ${pipeline} 파이프라인 실패: ${reason}`
   );
-  // 결과가 없으니 조회 404 본문도 ABORTED 를 실어야 결과 화면 폴링이 멈춤
+  // 결과가 없으니 조회 404 본문도 ABORTED 를 실어야 결과 화면 폴링이 멈춤.
+  // 결과가 이미 저장된 뒤의 실패면 등급을 덮지 않음 — 덮으면 정상 결과에
+  // 재측정 안내가 뜸
   try {
+    const { AnalysisResult } = await import('@06-entities/analysis-results');
+    if (await AnalysisResult.exists({ groupId })) {
+      console.warn(
+        `[postMeasurement] groupId=${groupId} 결과는 저장됨, 등급 유지함`
+      );
+      return;
+    }
     const { Session: SessionModel } = await import('@06-entities/sessions');
     await SessionModel.updateMany(
       { groupId },
@@ -552,25 +561,30 @@ export const engineController = {
       try {
         // 각 subject를 순차적으로 종료함
         for (const subjectIndex of subjectIndices) {
-          // 조회 뒤 엔진 업로드가 먼저 끝낸 세션은 건너뜀. 그 전이가 그룹
-          // 정리(cleanupGroup)까지 했으면 streamStop 이 legacy URL 로 새기 때문임
-          const fresh = await SessionModel.findOne({ groupId, subjectIndex });
-          if (fresh?.status === 'COMPLETED') continue;
+          // 재조회, 엔진 종료, 전이를 그룹 잠금 안에서 함. 밖에서 하면 다른
+          // subject 업로드가 마지막 전이로 그룹 정리(cleanupGroup)를 하는 사이
+          // streamStop 이 legacy URL 로 폴백함. 이 subject 들은 수동 중지로
+          // 표시돼 있어 엔진이 stop 처리 중 올리는 CSV 는 잠금을 기다리지
+          // 않으므로 교착이 없음
+          const result = await withGroupLock(groupId, async () => {
+            const fresh = await SessionModel.findOne({ groupId, subjectIndex });
+            if (fresh?.status === 'COMPLETED') return { allCompleted: false };
 
-          try {
-            await engineProxyService.streamStop(groupId, subjectIndex);
-          } catch (err) {
-            console.error(
-              `[stopAll] 엔진 종료 실패 subject=${subjectIndex}:`,
-              err
+            try {
+              await engineProxyService.streamStop(groupId, subjectIndex);
+            } catch (err) {
+              console.error(
+                `[stopAll] 엔진 종료 실패 subject=${subjectIndex}:`,
+                err
+              );
+            }
+
+            return stopMeasurementService(
+              groupId,
+              subjectIndex,
+              stopReason ?? 'ManualEarly'
             );
-          }
-
-          const result = await completeSubject(
-            groupId,
-            subjectIndex,
-            stopReason ?? 'ManualEarly'
-          );
+          });
           finishedGroup ||= result.allCompleted;
         }
       } finally {

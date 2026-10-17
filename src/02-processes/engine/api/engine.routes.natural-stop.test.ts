@@ -12,6 +12,7 @@ import request from 'supertest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { Types } from 'mongoose';
 
 const GROUP_ID = '65c9f0b2a1b2c3d4e5f67890';
 const SECRET = 'correct-engine-secret';
@@ -114,6 +115,11 @@ jest.mock('../services/session-coverage.service', () => ({
   })),
 }));
 
+// 파이프라인 실패 때 결과 존재 여부를 봄. 기본은 결과 없음
+jest.mock('@06-entities/analysis-results', () => ({
+  AnalysisResult: { exists: jest.fn().mockResolvedValue(null) },
+}));
+
 jest.mock('@02-processes/post-measurement', () => ({
   runPostMeasurementPipeline: jest.fn().mockResolvedValue(undefined),
   runBTIAnalysisPipeline: jest.fn().mockResolvedValue(undefined),
@@ -145,6 +151,7 @@ jest.mock('@07-shared/middlewares/authenticate.middleware', () => ({
 import { stopMeasurementService } from '@02-processes/measurements/services/measurement.service';
 import { SocketService } from '@07-shared/lib/socket';
 import { runPostMeasurementPipeline } from '@02-processes/post-measurement';
+import { AnalysisResult } from '@06-entities/analysis-results';
 import { engineProxyService } from '../services/engine-proxy.service';
 import { engineRegistryService } from '../services/engine-registry.service';
 import engineRouter from './engine.routes';
@@ -450,5 +457,57 @@ describe('csv-upload 자연 종료와 stop-all 경합 (SESSION-W008)', () => {
     await settle();
 
     expect(store.map((s) => s.analysisTier)).toEqual([null, null]);
+  });
+
+  it('결과 저장 뒤 단계에서 파이프라인이 실패하면 등급을 ABORTED 로 덮지 않음', async () => {
+    jest
+      .mocked(AnalysisResult.exists)
+      .mockResolvedValueOnce({ _id: new Types.ObjectId() });
+    jest
+      .mocked(runPostMeasurementPipeline)
+      .mockRejectedValueOnce(new Error('eegSummary 갱신 실패'));
+
+    await upload(1);
+    await upload(2);
+    await settle();
+
+    expect(store.map((s) => s.analysisTier)).toEqual(['VALID', 'VALID']);
+    expect(tierEvents()).toEqual(['VALID']);
+  });
+
+  it('stop-all 은 진행 중인 업로드 전이가 끝난 뒤 재조회해 끝난 subject 에 streamStop 을 보내지 않음', async () => {
+    // subject 1 은 이미 자연 종료됨. subject 2 업로드의 전이가 잠금 안에서
+    // 진행 중일 때 stop-all 이 들어옴
+    await upload(1).expect(200);
+    const realStop = jest
+      .mocked(stopMeasurementService)
+      .getMockImplementation();
+    let openGate!: () => void;
+    const gate = new Promise<void>((r) => (openGate = r));
+    let entered!: () => void;
+    const inside = new Promise<void>((r) => (entered = r));
+    jest
+      .mocked(stopMeasurementService)
+      .mockImplementationOnce(async (...args) => {
+        entered();
+        await gate;
+        return realStop!(...args);
+      });
+
+    const pendingUpload = upload(2).then((r) => r);
+    await inside;
+    const pendingStop = stopAll().then((r) => r);
+    // stop-all 이 잠금을 기다리는 동안 업로드 전이를 마저 끝냄
+    await new Promise((r) => setTimeout(r, 20));
+    openGate();
+    const [uploadRes, stopRes] = await Promise.all([
+      pendingUpload,
+      pendingStop,
+    ]);
+
+    expect(uploadRes.status).toBe(200);
+    expect(stopRes.status).toBe(200);
+    expect(engineProxyService.streamStop).not.toHaveBeenCalled();
+    expect(reasons()).toEqual(['1:COMPLETED:Natural', '2:COMPLETED:Natural']);
   });
 });

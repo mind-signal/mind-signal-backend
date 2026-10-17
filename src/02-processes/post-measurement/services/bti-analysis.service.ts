@@ -96,15 +96,23 @@ export const runBTIAnalysisPipeline = async (
     pipelineResult: sessionResult,
   });
 
-  // EegRecord eegSummary 업데이트함
+  // EegRecord eegSummary 업데이트함. 결과는 이미 저장됐으므로 실패해도
+  // 파이프라인 실패로 올리지 않음 (SESSION-W008)
   const subjects = sessionResult.subjects as any[];
   if (subjects?.length >= 1) {
-    await EegRecord.findByIdAndUpdate(record1._id, {
-      eegSummary: {
-        metricsMean: subjects[0]?.metricsMean,
-        wavesMean: subjects[0]?.wavesMean,
-      },
-    });
+    try {
+      await EegRecord.findByIdAndUpdate(record1._id, {
+        eegSummary: {
+          metricsMean: subjects[0]?.metricsMean,
+          wavesMean: subjects[0]?.wavesMean,
+        },
+      });
+    } catch (err) {
+      console.warn(
+        `[btiAnalysis] groupId=${groupId} eegSummary 갱신 실패 (결과는 저장됨):`,
+        err
+      );
+    }
   }
 
   console.log(`[btiAnalysis] groupId=${groupId} BTI 분석 완료`);

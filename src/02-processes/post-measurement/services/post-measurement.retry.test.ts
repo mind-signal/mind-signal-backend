@@ -184,3 +184,27 @@ describe('runPostMeasurementPipeline: 엔진 실패 처리', () => {
     expect(AnalysisResult.create).not.toHaveBeenCalled();
   });
 });
+
+describe('runPostMeasurementPipeline: 결과 저장 뒤 단계 실패 (SESSION-W008)', () => {
+  it('eegSummary 갱신이 실패해도 던지지 않음 — 정상 결과에 ABORTED 가 덮이지 않게 함', async () => {
+    (MatchingPool.findOne as jest.Mock).mockResolvedValue(null);
+    (engineProxyService.analyzePipeline as jest.Mock).mockResolvedValue({
+      synchronyScore: 0.5,
+      markdown: '# ok',
+      subjects: [{}, {}],
+    });
+    (EegRecord.findByIdAndUpdate as jest.Mock).mockRejectedValue(
+      new Error('mongo write timeout')
+    );
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(runPostMeasurementPipeline(GROUP_ID)).resolves.toBeUndefined();
+
+    expect(AnalysisResult.findOneAndUpdate).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('eegSummary 갱신 실패'),
+      expect.any(Error)
+    );
+    warn.mockRestore();
+  });
+});
