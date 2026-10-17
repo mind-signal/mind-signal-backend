@@ -273,6 +273,7 @@ export class SocketService {
             subject_idx: subjectIndex,
             payload,
             metrics,
+            proxy_ingress_ts_ns: proxyIngressTsNs,
           } = parsed.data;
           const channel = `mind-signal:${groupId}:subject:${subjectIndex}`;
           tallyFor(subjectIndex).received++;
@@ -282,12 +283,19 @@ export class SocketService {
             // dedup 미수행이라 duplicate 필드 미emit - be-forwarder는 ok:true로 dequeue함.
             // 소비자가 요구하는 형태({type, waves, metrics})로 감싸 publish함.
             // metrics는 구버전 DE 프레임에서 없을 수 있어 있을 때만 실음.
+            // proxy_ingress_ts_ns는 aligner 페어링 기준이라 함께 실음 (EEG-W006).
             await redisService.client.publish(
               channel,
               JSON.stringify({
                 type: 'brain_sync_all',
                 waves: payload,
                 ...(metrics ? { metrics } : {}),
+                // snake_case는 프록시 envelope 계약 필드명임
+                /* eslint-disable camelcase */
+                ...(proxyIngressTsNs
+                  ? { proxy_ingress_ts_ns: proxyIngressTsNs }
+                  : {}),
+                /* eslint-enable camelcase */
               })
             );
             // await 사이에 요약 타이머가 돌면 위에서 잡아 둔 tally 객체는
