@@ -355,4 +355,4 @@ base branch는 항상 `dev`로 설정합니다.
 
 ## 11. AI 에이전트 작업 규칙
 
-이 저장소에서 AI 에이전트(Claude Code, Codex CLI 등)가 작업할 때 따라야 할 규칙은 `AGENTS.md`(공통) / `CLAUDE.md`(Claude 전용) / `.agents/rules/*.md`(상세)를 참조하세요.
+이 저장소에서 AI 에이전트(Claude Code, Codex CLI 등)가 작업할 때 따라야 할 규칙은 `AGENTS.md`(공통) / `.agents/rules/*.md`(상세)를 참조하세요.
