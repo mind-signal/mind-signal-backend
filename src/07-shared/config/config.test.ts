@@ -37,4 +37,22 @@ describe('config — Bedrock 설정과 chat-only 가드', () => {
 
     expect(loadConfig).toThrow(/CHAT_ONLY_MODE/);
   });
+
+  it.each(['abc', 'Infinity'])(
+    'DUAL_2PC_SOLO_WAIT_MS=%s면 기본 1000ms로 대체하고 경고함',
+    (raw) => {
+      process.env.DUAL_2PC_SOLO_WAIT_MS = raw;
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(loadConfig().dualPc.soloWaitMs).toBe(1000);
+      expect(warn).toHaveBeenCalledTimes(1);
+      warn.mockRestore();
+    }
+  );
+
+  it('DUAL_2PC_SOLO_WAIT_MS가 유한한 숫자면 그대로 씀', () => {
+    process.env.DUAL_2PC_SOLO_WAIT_MS = '1500';
+
+    expect(loadConfig().dualPc.soloWaitMs).toBe(1500);
+  });
 });

@@ -110,14 +110,17 @@ class TimestampAligner {
   /**
    * @param groupId - 실험 그룹 ID (SocketService.emitToGroup 호출에 사용)
    * @param toleranceMs - 두 subject 타임스탬프 허용 오차(ms). 기본 200ms (plan-review M-4)
-   * @param soloWaitMs - 단독 emit 전 짝 대기 시간(ms). 미지정이거나 toleranceMs 미만이면 toleranceMs 사용
+   * @param soloWaitMs - 단독 emit 전 짝 대기 시간(ms). 미지정이거나 유한하지 않거나 toleranceMs 미만이면 toleranceMs 사용
    */
   constructor(
     private groupId: string,
     private toleranceMs: number,
     soloWaitMs = toleranceMs
   ) {
-    this.soloWaitMs = Math.max(soloWaitMs, toleranceMs);
+    // NaN과 Infinity는 Math.max 뒤에도 남아 단독 emit을 영구히 막으므로 대체함
+    this.soloWaitMs = Number.isFinite(soloWaitMs)
+      ? Math.max(soloWaitMs, toleranceMs)
+      : toleranceMs;
   }
 
   /**
@@ -189,6 +192,11 @@ class TimestampAligner {
       }
 
       if (bestIdx >= 0) {
+        // 짝보다 먼저 받은 같은 subject 미매칭 항목은 이 짝 emit 전에 단독으로
+        // 내보냄. subject별 수신은 FIFO라 그 항목의 짝은 더 오지 않음. 나중에
+        // 단독 emit하면 FE 지표가 옛 값으로 덮임 (EEG-W006 리뷰)
+        this.emitOlderSolo(fresh1, usedIdx1, i1, 1, aligned);
+        this.emitOlderSolo(fresh2, usedIdx2, bestIdx, 2, aligned);
         usedIdx1.add(i1);
         usedIdx2.add(bestIdx);
         const entry2 = fresh2[bestIdx];
@@ -255,21 +263,59 @@ class TimestampAligner {
     const kept: BufferEntry[] = [];
     for (const entry of own) {
       if (now - entry.ts > this.soloWaitMs) {
-        /* eslint-disable camelcase */
-        const sample: AlignedSample = {
-          groupId: this.groupId,
-          timestamp_ms: alignMs(entry),
-          subject_1: subjectIndex === 1 ? entry.sample : null,
-          subject_2: subjectIndex === 2 ? entry.sample : null,
-        };
-        /* eslint-enable camelcase */
-        aligned.push(sample);
-        SocketService.emitToGroup(this.groupId, 'aligned_pair', sample);
+        this.emitOne(entry, subjectIndex, aligned);
       } else {
         kept.push(entry);
       }
     }
     return kept;
+  }
+
+  /**
+   * 짝 맞춘 항목(pairedIdx)보다 먼저 받은 미매칭 항목을 단독 emit하고 사용 처리함.
+   *
+   * @param buf - 이 subject 의 버퍼
+   * @param used - 이미 emit 된 인덱스 집합
+   * @param pairedIdx - 짝을 맞춘 항목의 인덱스
+   * @param subjectIndex - 1 또는 2 (1-based)
+   * @param aligned - emit 된 샘플을 누적할 배열
+   */
+  private emitOlderSolo(
+    buf: BufferEntry[],
+    used: Set<number>,
+    pairedIdx: number,
+    subjectIndex: 1 | 2,
+    aligned: AlignedSample[]
+  ): void {
+    for (let i = 0; i < pairedIdx; i++) {
+      if (used.has(i)) continue;
+      used.add(i);
+      this.emitOne(buf[i], subjectIndex, aligned);
+    }
+  }
+
+  /**
+   * 한 항목을 상대 없이 단독 emit함.
+   *
+   * @param entry - 내보낼 항목
+   * @param subjectIndex - 1 또는 2 (1-based)
+   * @param aligned - emit 된 샘플을 누적할 배열
+   */
+  private emitOne(
+    entry: BufferEntry,
+    subjectIndex: 1 | 2,
+    aligned: AlignedSample[]
+  ): void {
+    /* eslint-disable camelcase */
+    const sample: AlignedSample = {
+      groupId: this.groupId,
+      timestamp_ms: alignMs(entry),
+      subject_1: subjectIndex === 1 ? entry.sample : null,
+      subject_2: subjectIndex === 2 ? entry.sample : null,
+    };
+    /* eslint-enable camelcase */
+    aligned.push(sample);
+    SocketService.emitToGroup(this.groupId, 'aligned_pair', sample);
   }
 }
 

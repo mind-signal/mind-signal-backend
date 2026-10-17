@@ -598,6 +598,85 @@ describe('[TS-STREAM-01] timestampAlignerRegistry — BE-aligner', () => {
       clock = t0 + 201;
       expect(timestampAlignerRegistry.flush(groupId)).toHaveLength(1);
     });
+
+    it.each([NaN, Infinity])(
+      'soloWaitMs 가 %s 면 toleranceMs 로 대체해 단독 emit 이 막히지 않음',
+      (wait) => {
+        const groupId = `grp-solo-${wait}`;
+        timestampAlignerRegistry.getOrCreate(groupId, 200, wait);
+        const t0 = clock;
+        timestampAlignerRegistry.ingest(groupId, 1, makeSample(1), t0, ns(0));
+
+        clock = t0 + 201;
+        expect(timestampAlignerRegistry.flush(groupId)).toHaveLength(1);
+      }
+    );
+
+    it('짝 맞춘 항목보다 먼저 받은 미매칭 항목은 그 짝보다 먼저 단독 emit됨', () => {
+      // subject 1 의 A 는 짝이 유실되고, 뒤이어 B 가 짝을 맞춤. A 를 대기 한도까지
+      // 남겨 두면 B 의 짝 뒤에 A 가 나가 FE 지표가 옛 값으로 덮임
+      const groupId = 'grp-solo-order';
+      timestampAlignerRegistry.getOrCreate(groupId, 200, 1000);
+      const t0 = clock;
+      const a = makeSample(1);
+      const b = makeSample(2);
+      const b2 = makeSample(3);
+      const emitted = [];
+
+      timestampAlignerRegistry.ingest(groupId, 1, a, t0, ns(0));
+      for (const at of [100, 200, 300, 400, 500, 600, 1200]) {
+        clock = t0 + at;
+        if (at === 500) {
+          timestampAlignerRegistry.ingest(groupId, 1, b, t0 + 500, ns(500));
+        }
+        if (at === 600) {
+          timestampAlignerRegistry.ingest(groupId, 2, b2, t0 + 600, ns(510));
+        }
+        emitted.push(...timestampAlignerRegistry.flush(groupId));
+      }
+
+      expect(emitted.map((e) => [e.subject_1, e.subject_2])).toEqual([
+        [a, null],
+        [b, b2],
+      ]);
+    });
+
+    it('두 subject 가 300ms 위상 차로 계속 오면 drop 과 정체 없이 단독이 교대함 (EEG-W005, 대기 1000ms)', () => {
+      const groupId = 'grp-solo-phase300';
+      timestampAlignerRegistry.getOrCreate(groupId, 200, 1000);
+      const t0 = clock;
+      const emitted = [];
+
+      // 1Hz 두 스트림이 프록시 시각으로도 300ms 어긋나 짝이 맞지 않음
+      for (let at = 0; at <= 6000; at += 100) {
+        clock = t0 + at;
+        if (at % 1000 === 0) {
+          timestampAlignerRegistry.ingest(
+            groupId,
+            1,
+            makeSample(at),
+            t0 + at,
+            ns(at)
+          );
+        }
+        if (at % 1000 === 300) {
+          timestampAlignerRegistry.ingest(
+            groupId,
+            2,
+            makeSample(at),
+            t0 + at,
+            ns(at)
+          );
+        }
+        emitted.push(...timestampAlignerRegistry.flush(groupId));
+      }
+
+      // 6000ms 까지 받은 subject 1 의 7개와 subject 2 의 6개 중 대기 한도를 넘긴
+      // 것(5000ms 이전 수신)은 모두 나가고, 남은 것은 대기 한도 안의 항목뿐임
+      const order = emitted.map((e) => (e.subject_1 ? 1 : 2));
+      expect(order).toEqual([1, 2, 1, 2, 1, 2, 1, 2, 1, 2]);
+      expect(emitted.every((e) => !(e.subject_1 && e.subject_2))).toBe(true);
+    });
   });
 
   // ============================================================
