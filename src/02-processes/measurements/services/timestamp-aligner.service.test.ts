@@ -523,6 +523,84 @@ describe('[TS-STREAM-01] timestampAlignerRegistry — BE-aligner', () => {
   });
 
   // ============================================================
+  // EEG-W006 8장: 단독 emit 대기 시간(soloWaitMs)을 tolerance 와 분리
+  // flush 시각을 Date.now 스파이로 고정해 100ms 주기 flush 를 재현함
+  // ============================================================
+
+  describe('EEG-W006: soloWaitMs 단독 emit 대기', () => {
+    const baseNs = BigInt(Date.now()) * 1_000_000n;
+    const ns = (offsetMs: number): string =>
+      (baseNs + BigInt(offsetMs) * 1_000_000n).toString();
+    let clock = 0;
+
+    beforeEach(() => {
+      clock = Date.now();
+      jest.spyOn(Date, 'now').mockImplementation(() => clock);
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('프록시 시각 차 10ms, BE 도착 300ms 차 → pair 1개 (OPS-W019 4회차)', () => {
+      const groupId = 'grp-solo-late';
+      timestampAlignerRegistry.getOrCreate(groupId, 200, 1000);
+      const t0 = clock;
+      const emitted = [];
+
+      timestampAlignerRegistry.ingest(groupId, 1, makeSample(1), t0, ns(0));
+      // 100ms 주기 flush. 옛 동작(대기 한도 200ms)이면 250ms 에 subject 1, 600ms 에
+      // subject 2 가 각각 단독으로 나가 단독 2개가 됨
+      for (const at of [50, 150, 250, 300, 600]) {
+        clock = t0 + at;
+        if (at === 300) {
+          timestampAlignerRegistry.ingest(
+            groupId,
+            2,
+            makeSample(2),
+            t0 + 300,
+            ns(10)
+          );
+        }
+        emitted.push(...timestampAlignerRegistry.flush(groupId));
+      }
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0].subject_1).not.toBeNull();
+      expect(emitted[0].subject_2).not.toBeNull();
+    });
+
+    it('짝이 없으면 soloWaitMs 전에는 보류하고 넘으면 단독 emit함', () => {
+      const groupId = 'grp-solo-wait';
+      timestampAlignerRegistry.getOrCreate(groupId, 200, 1000);
+      const t0 = clock;
+      timestampAlignerRegistry.ingest(groupId, 1, makeSample(1), t0, ns(0));
+
+      clock = t0 + 1000;
+      expect(timestampAlignerRegistry.flush(groupId)).toHaveLength(0);
+
+      clock = t0 + 1001;
+      const result = timestampAlignerRegistry.flush(groupId);
+      expect(result).toHaveLength(1);
+      expect(result[0].subject_1).not.toBeNull();
+      expect(result[0].subject_2).toBeNull();
+    });
+
+    it('soloWaitMs 가 toleranceMs 보다 작으면 toleranceMs 로 올림', () => {
+      const groupId = 'grp-solo-clamp';
+      timestampAlignerRegistry.getOrCreate(groupId, 200, 50);
+      const t0 = clock;
+      timestampAlignerRegistry.ingest(groupId, 1, makeSample(1), t0, ns(0));
+
+      clock = t0 + 200;
+      expect(timestampAlignerRegistry.flush(groupId)).toHaveLength(0);
+
+      clock = t0 + 201;
+      expect(timestampAlignerRegistry.flush(groupId)).toHaveLength(1);
+    });
+  });
+
+  // ============================================================
   // v8 C-1: brain_sync_all 타입 가드 소스 검증
   // ============================================================
 
