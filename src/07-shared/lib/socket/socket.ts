@@ -5,6 +5,7 @@ import { config } from '@07-shared/config/config';
 import { OPERATOR_SOCKET_TOKEN_TYPE } from '@07-shared/constants/operator-socket-token';
 import { redisService } from '@07-shared/lib/redis';
 import { ProxySampleSchema, ProxyStatusSchema } from './proxy-envelope.schema';
+import { hasSample, markSample } from './proxy-sample-dedup';
 
 /**
  * /proxy 수신 요약을 남기는 주기(ms).
@@ -202,6 +203,7 @@ export class SocketService {
         {
           received: number;
           published: number;
+          duplicate: number;
           invalid: number;
           channels: Set<string>;
         }
@@ -212,6 +214,7 @@ export class SocketService {
           t = {
             received: 0,
             published: 0,
+            duplicate: 0,
             invalid: 0,
             channels: new Set<string>(),
           };
@@ -226,7 +229,8 @@ export class SocketService {
         )) {
           console.log(
             `[/proxy] summary subject=${subjectIndex} received=${t.received} ` +
-              `published=${t.published} invalid=${t.invalid} ` +
+              `published=${t.published} duplicate=${t.duplicate} ` +
+              `invalid=${t.invalid} ` +
               `channels=[${[...t.channels].join(',')}]`
           );
           // 값만 비우고 키는 남긴다. 0으로 떨어진 subject가 목록에서 사라지면
@@ -234,6 +238,7 @@ export class SocketService {
           window.set(subjectIndex, {
             received: 0,
             published: 0,
+            duplicate: 0,
             invalid: 0,
             channels: new Set<string>(),
           });
@@ -248,6 +253,7 @@ export class SocketService {
           envelope: unknown,
           ack?: (response: {
             ok: boolean;
+            duplicate?: boolean;
             retryable?: boolean;
             error?: string;
           }) => void
@@ -274,13 +280,27 @@ export class SocketService {
             payload,
             metrics,
             proxy_ingress_ts_ns: proxyIngressTsNs,
+            seq,
+            de_ts_ns: deTsNs,
           } = parsed.data;
           const channel = `mind-signal:${groupId}:subject:${subjectIndex}`;
           tallyFor(subjectIndex).received++;
+          // 엔진 재시도와 프록시 replay로 다시 온 샘플은 publish하지 않음 (EEG-W007).
+          // 키가 없는 구버전 엔진 envelope은 거르지 않음.
+          // ponytail: 같은 envelope이 첫 publish 완료 전에 겹쳐 오면 둘 다 publish됨,
+          // 겹침이 실측되면 in-flight 키 기록 추가함
+          const dedupKey =
+            seq !== undefined && deTsNs !== undefined
+              ? ([groupId, subjectIndex, seq, deTsNs] as const)
+              : undefined;
+          if (dedupKey && hasSample(...dedupKey)) {
+            tallyFor(subjectIndex).duplicate++;
+            ack?.({ ok: true, duplicate: true });
+            return;
+          }
           try {
             // redisService.client는 publish 전용 - 모든 subscribe는 duplicate() 경유라
             // 이 공유 client는 PubSub 모드에 진입하지 않음 (measurement.service.ts 정합).
-            // dedup 미수행이라 duplicate 필드 미emit - be-forwarder는 ok:true로 dequeue함.
             // 소비자가 요구하는 형태({type, waves, metrics})로 감싸 publish함.
             // metrics는 구버전 DE 프레임에서 없을 수 있어 있을 때만 실음.
             // proxy_ingress_ts_ns는 aligner 페어링 기준이라 함께 실음 (EEG-W006).
@@ -305,6 +325,8 @@ export class SocketService {
             const publishedTally = tallyFor(subjectIndex);
             publishedTally.published++;
             publishedTally.channels.add(channel);
+            // publish 성공 뒤에만 기록해 실패 후 재전송을 중복으로 버리지 않음
+            if (dedupKey) markSample(...dedupKey);
             ack?.({ ok: true });
           } catch (err) {
             // Redis 일시 장애는 재시도 허용함 - 소켓은 죽이지 않음

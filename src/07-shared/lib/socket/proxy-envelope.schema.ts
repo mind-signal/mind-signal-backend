@@ -5,8 +5,8 @@ import { z } from 'zod';
  * proxy be-forwarder가 `proxy:sample`로 보내는 envelope의 집중 검증 스키마.
  *
  * publish에 필요한 필드(group_id, subject_idx, payload)와 정렬 기준
- * proxy_ingress_ts_ns만 검증함. de_ts_ns/seq/sync_meta는 BE 미소비라
- * 미검증함 (Zod가 strip).
+ * proxy_ingress_ts_ns, 중복 판정 키 seq/de_ts_ns만 검증함. sync_meta는
+ * BE 미소비라 미검증함 (Zod가 strip).
  * 계약 출처: mind-signal-proxy/src/types/envelope.ts
  */
 
@@ -60,6 +60,9 @@ export const ProxySampleSchema = z.object({
   metrics: EmotivMetricsSchema.optional(),
   // 프록시가 항상 찍지만 구버전 프록시와 호환하려고 optional임
   proxy_ingress_ts_ns: IngressTsNsSchema.optional(),
+  // 재시도/replay 중복 판정 키임 (EEG-W007). 구버전 엔진은 없을 수 있어 optional임
+  seq: z.number().int().min(0).optional(),
+  de_ts_ns: IngressTsNsSchema.optional(),
 });
 
 export type ProxySample = z.infer<typeof ProxySampleSchema>;
