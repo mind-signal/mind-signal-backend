@@ -61,7 +61,8 @@ export const ProxySampleSchema = z.object({
   // 프록시가 항상 찍지만 구버전 프록시와 호환하려고 optional임
   proxy_ingress_ts_ns: IngressTsNsSchema.optional(),
   // 재시도/replay 중복 판정 키임 (EEG-W007). 구버전 엔진은 없을 수 있어 optional임
-  seq: z.number().int().min(0).optional(),
+  // 범위는 프록시 계약과 같게 둠. 더 좁히면 프록시가 받은 샘플을 invalid_frame으로 버림
+  seq: z.number().int().optional(),
   de_ts_ns: IngressTsNsSchema.optional(),
 });
 

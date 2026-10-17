@@ -389,6 +389,16 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
       expect(mockPublish).toHaveBeenCalledTimes(1);
     });
 
+    it('음수 seq도 publish하고 같은 envelope 두 번째는 duplicate:true', async () => {
+      mockPublish.mockResolvedValue(1);
+      // 프록시 계약은 seq 음수를 허용하므로 invalid_frame으로 버리면 샘플 손실임
+      const envelope = { ...base, seq: -1, de_ts_ns: '1760000000000000010' };
+
+      expect(await send(envelope)).toEqual({ ok: true });
+      expect(await send(envelope)).toEqual({ ok: true, duplicate: true });
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+    });
+
     it('같은 seq와 다른 de_ts_ns(엔진 재시작)면 둘 다 publish함', async () => {
       mockPublish.mockResolvedValue(1);
 
