@@ -5,7 +5,7 @@ import { config } from '@07-shared/config/config';
 import { OPERATOR_SOCKET_TOKEN_TYPE } from '@07-shared/constants/operator-socket-token';
 import { redisService } from '@07-shared/lib/redis';
 import { ProxySampleSchema, ProxyStatusSchema } from './proxy-envelope.schema';
-import { hasSample, markSample } from './proxy-sample-dedup';
+import { hasSample, markSample, unmarkSample } from './proxy-sample-dedup';
 
 /**
  * /proxy 수신 요약을 남기는 주기(ms).
@@ -287,8 +287,8 @@ export class SocketService {
           tallyFor(subjectIndex).received++;
           // 엔진 재시도와 프록시 replay로 다시 온 샘플은 publish하지 않음 (EEG-W007).
           // 키가 없는 구버전 엔진 envelope은 거르지 않음.
-          // ponytail: 같은 envelope이 첫 publish 완료 전에 겹쳐 오면 둘 다 publish됨,
-          // 겹침이 실측되면 in-flight 키 기록 추가함
+          // publish 시작 전에 기록해 처리 중인 샘플도 중복으로 판정함. 중계기가
+          // 원본 직후 같은 프레임을 보내면 첫 publish 완료 전에 겹쳐 옴 (T5 2차)
           const dedupKey =
             seq !== undefined && deTsNs !== undefined
               ? ([groupId, subjectIndex, seq, deTsNs] as const)
@@ -298,6 +298,7 @@ export class SocketService {
             ack?.({ ok: true, duplicate: true });
             return;
           }
+          if (dedupKey) markSample(...dedupKey);
           try {
             // redisService.client는 publish 전용 - 모든 subscribe는 duplicate() 경유라
             // 이 공유 client는 PubSub 모드에 진입하지 않음 (measurement.service.ts 정합).
@@ -325,12 +326,12 @@ export class SocketService {
             const publishedTally = tallyFor(subjectIndex);
             publishedTally.published++;
             publishedTally.channels.add(channel);
-            // publish 성공 뒤에만 기록해 실패 후 재전송을 중복으로 버리지 않음
-            if (dedupKey) markSample(...dedupKey);
             ack?.({ ok: true });
           } catch (err) {
             // Redis 일시 장애는 재시도 허용함 - 소켓은 죽이지 않음
             console.error(`[/proxy] publish 실패 ${channel}:`, err);
+            // 기록을 지워 프록시 재전송이 다시 publish되게 함
+            if (dedupKey) unmarkSample(...dedupKey);
             ack?.({ ok: false, retryable: true, error: 'publish_failed' });
           }
         }

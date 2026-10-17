@@ -1,5 +1,5 @@
 /**
- * /proxy가 이미 publish한 샘플의 키 기록임 (EEG-W007).
+ * /proxy가 처리 중이거나 publish한 샘플의 키 기록임 (EEG-W007).
  *
  * 엔진의 프록시 POST 재시도와 프록시의 재연결 replay가 같은 envelope을 다시
  * 보내므로 (group_id, subject_idx, seq, de_ts_ns)로 거름. 엔진이 같은 그룹에서
@@ -19,7 +19,7 @@ function sampleKey(seq: number, deTsNs: string): string {
 }
 
 /**
- * 이미 publish한 샘플인지 반환함.
+ * 처리 중이거나 publish한 샘플인지 반환함.
  *
  * @param groupId - 실험 그룹 식별자임
  * @param subjectIndex - 1-based subject 번호임
@@ -39,7 +39,7 @@ export function hasSample(
 }
 
 /**
- * publish 성공한 샘플 키를 기록함. 상한을 넘으면 가장 오래된 것부터 버림.
+ * publish를 시작한 샘플 키를 기록함. 상한을 넘으면 가장 오래된 것부터 버림.
  *
  * @param groupId - 실험 그룹 식별자임
  * @param subjectIndex - 1-based subject 번호임
@@ -72,6 +72,23 @@ export function markSample(
   const oldestKey =
     keys.size > MAX_KEYS_PER_SUBJECT && keys.values().next().value;
   if (oldestKey) keys.delete(oldestKey);
+}
+
+/**
+ * publish 실패한 샘플 키를 지움. 프록시 재전송을 중복으로 버리지 않기 위함임.
+ *
+ * @param groupId - 실험 그룹 식별자임
+ * @param subjectIndex - 1-based subject 번호임
+ * @param seq - 엔진 샘플 순번임
+ * @param deTsNs - 엔진 타임스탬프(ns 십진 문자열)임
+ */
+export function unmarkSample(
+  groupId: string,
+  subjectIndex: number,
+  seq: number,
+  deTsNs: string
+): void {
+  seen.get(groupId)?.get(subjectIndex)?.delete(sampleKey(seq, deTsNs));
 }
 
 /** 시험 간 기록 누수 방지용 초기화임 */

@@ -420,6 +420,45 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
       expect(mockPublish).toHaveBeenCalledTimes(2);
     });
 
+    it('첫 publish가 끝나기 전에 같은 envelope이 오면 publish 1회와 duplicate ack', async () => {
+      let release: (value: number) => void = () => {};
+      mockPublish.mockReturnValueOnce(
+        new Promise<number>((resolve) => {
+          release = resolve;
+        })
+      );
+      const envelope = { ...base, seq: 11, de_ts_ns: '1760000000000000011' };
+
+      const first = send(envelope);
+      // 첫 publish가 대기 중인 동안 두 번째가 도착함
+      expect(await send(envelope)).toEqual({ ok: true, duplicate: true });
+      release(1);
+      expect(await first).toEqual({ ok: true });
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+    });
+
+    it('처리 중 publish가 실패하면 기록을 지워 재전송을 publish함', async () => {
+      let fail: (err: Error) => void = () => {};
+      mockPublish.mockReturnValueOnce(
+        new Promise<number>((_, reject) => {
+          fail = reject;
+        })
+      );
+      mockPublish.mockResolvedValue(1);
+      const envelope = { ...base, seq: 12, de_ts_ns: '1760000000000000012' };
+
+      const first = send(envelope);
+      expect(await send(envelope)).toEqual({ ok: true, duplicate: true });
+      fail(new Error('redis down'));
+      expect(await first).toEqual({
+        ok: false,
+        retryable: true,
+        error: 'publish_failed',
+      });
+      expect(await send(envelope)).toEqual({ ok: true });
+      expect(mockPublish).toHaveBeenCalledTimes(2);
+    });
+
     it('publish 실패 뒤 같은 envelope 재전송이면 publish함', async () => {
       mockPublish.mockRejectedValueOnce(new Error('redis down'));
       mockPublish.mockResolvedValue(1);
