@@ -234,21 +234,30 @@ export const runPostMeasurementPipeline = async (groupId: string) => {
     return;
   }
 
-  // 5. EegRecord eegSummary 업데이트함
+  // 5. EegRecord eegSummary 업데이트함. 결과는 이미 저장됐으므로 여기서
+  // 실패해도 파이프라인 실패로 올리지 않음 — 올리면 정상 결과에 ABORTED 가
+  // 덮여 재측정 안내가 뜸 (SESSION-W008)
   const subjects = pipelineResult.subjects as any[];
   if (subjects?.length >= 2) {
-    await EegRecord.findByIdAndUpdate(record1._id, {
-      eegSummary: {
-        baseline: subjects[0]?.baseline,
-        features: subjects[0]?.features,
-      },
-    });
-    await EegRecord.findByIdAndUpdate(record2._id, {
-      eegSummary: {
-        baseline: subjects[1]?.baseline,
-        features: subjects[1]?.features,
-      },
-    });
+    try {
+      await EegRecord.findByIdAndUpdate(record1._id, {
+        eegSummary: {
+          baseline: subjects[0]?.baseline,
+          features: subjects[0]?.features,
+        },
+      });
+      await EegRecord.findByIdAndUpdate(record2._id, {
+        eegSummary: {
+          baseline: subjects[1]?.baseline,
+          features: subjects[1]?.features,
+        },
+      });
+    } catch (err) {
+      console.warn(
+        `[postMeasurement] groupId=${groupId} eegSummary 갱신 실패 (결과는 저장됨):`,
+        err
+      );
+    }
   }
 
   console.log(
