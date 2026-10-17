@@ -370,7 +370,8 @@ function startDualMeasurement(groupId: string): void {
       // aligner registry에 인스턴스 생성
       timestampAlignerRegistry.getOrCreate(
         groupId,
-        config.dualPc.timestampToleranceMs
+        config.dualPc.timestampToleranceMs,
+        config.dualPc.soloWaitMs
       );
 
       // stimulus broadcast (room emit)

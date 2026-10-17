@@ -58,6 +58,22 @@ if (messageBusRaw !== 'redis' && messageBusRaw !== 'memory') {
 }
 const messageBus: 'redis' | 'memory' = messageBusRaw;
 
+// 3.7 단독 emit 대기 시간 — 숫자가 아니거나 Infinity면 단독 emit이 영구히 막혀
+// aligner 버퍼가 무한히 쌓이므로 기본값으로 대체하고 경고함 (EEG-W006 리뷰)
+const DEFAULT_SOLO_WAIT_MS = 1000;
+const soloWaitRaw = Number(
+  process.env.DUAL_2PC_SOLO_WAIT_MS ?? DEFAULT_SOLO_WAIT_MS
+);
+if (!Number.isFinite(soloWaitRaw)) {
+  console.warn(
+    `DUAL_2PC_SOLO_WAIT_MS가 유한한 숫자가 아님 (현재: ${process.env.DUAL_2PC_SOLO_WAIT_MS}). ` +
+      `기본값 ${DEFAULT_SOLO_WAIT_MS}ms 사용함`
+  );
+}
+const soloWaitMs = Number.isFinite(soloWaitRaw)
+  ? soloWaitRaw
+  : DEFAULT_SOLO_WAIT_MS;
+
 // 4. 설정 객체 내보내기
 export const config = {
   env: nodeEnv,
@@ -118,6 +134,9 @@ export const config = {
     timestampToleranceMs: Number(
       process.env.DUAL_2PC_TIMESTAMP_TOLERANCE_MS ?? 200
     ),
+    // 단독 emit 전 짝 대기 시간. BE 도착 지연이 tolerance 보다 커도 짝을 맞추려고
+    // 분리함 (EEG-W006 8장). 1인 측정 화면 반영이 최대 이만큼 늦어짐
+    soloWaitMs,
     registrationTimeoutMs: Number(
       process.env.DUAL_2PC_REGISTRATION_TIMEOUT_MS ?? 60000
     ),
