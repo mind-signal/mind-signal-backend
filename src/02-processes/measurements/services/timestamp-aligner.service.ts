@@ -104,15 +104,24 @@ function alignMs(e: BufferEntry): number {
 class TimestampAligner {
   /** subjectIndex(1 또는 2) 별 미처리 샘플 버퍼 */
   private buffer: Map<number, BufferEntry[]> = new Map();
+  /** 짝 없는 샘플을 BE 수신 뒤 기다리는 최대 시간(ms). toleranceMs 이상임 */
+  private soloWaitMs: number;
 
   /**
    * @param groupId - 실험 그룹 ID (SocketService.emitToGroup 호출에 사용)
    * @param toleranceMs - 두 subject 타임스탬프 허용 오차(ms). 기본 200ms (plan-review M-4)
+   * @param soloWaitMs - 단독 emit 전 짝 대기 시간(ms). 미지정이거나 유한하지 않거나 toleranceMs 미만이면 toleranceMs 사용
    */
   constructor(
     private groupId: string,
-    private toleranceMs: number
-  ) {}
+    private toleranceMs: number,
+    soloWaitMs = toleranceMs
+  ) {
+    // NaN과 Infinity는 Math.max 뒤에도 남아 단독 emit을 영구히 막으므로 대체함
+    this.soloWaitMs = Number.isFinite(soloWaitMs)
+      ? Math.max(soloWaitMs, toleranceMs)
+      : toleranceMs;
+  }
 
   /**
    * 단일 subject 샘플을 버퍼에 적재함.
@@ -146,7 +155,7 @@ class TimestampAligner {
    *
    * - |ts_1 - ts_2| ≤ toleranceMs 인 쌍 생성
    * - AlignedSample.subject_1 / subject_2 필드로 매핑 (1-based)
-   * - 매칭 실패 샘플은 toleranceMs 초과 대기 시 상대를 null 로 두고 단독 emit
+   * - 매칭 실패 샘플은 soloWaitMs 초과 대기 시 상대를 null 로 두고 단독 emit
    * - 정렬된 쌍은 SocketService.emitToGroup(groupId, 'aligned_pair', alignedSample) 전송
    *
    * @returns 정렬된 AlignedSample 배열
@@ -183,6 +192,11 @@ class TimestampAligner {
       }
 
       if (bestIdx >= 0) {
+        // 짝보다 먼저 받은 같은 subject 미매칭 항목은 이 짝 emit 전에 단독으로
+        // 내보냄. subject별 수신은 FIFO라 그 항목의 짝은 더 오지 않음. 나중에
+        // 단독 emit하면 FE 지표가 옛 값으로 덮임 (EEG-W006 리뷰)
+        this.emitOlderSolo(fresh1, usedIdx1, i1, 1, aligned);
+        this.emitOlderSolo(fresh2, usedIdx2, bestIdx, 2, aligned);
         usedIdx1.add(i1);
         usedIdx2.add(bestIdx);
         const entry2 = fresh2[bestIdx];
@@ -217,6 +231,11 @@ class TimestampAligner {
     // 300ms 위상 차로 계속 들어오자 상대 버퍼가 비는 순간이 없어 먼저 온
     // subject 1 이 매번 500ms 만료로 drop 되고 화면이 STALE 이 됐음 (BE 수신은
     // 정상). 옛 코드는 그 조건에 더해 subject 2 에만 분기가 있었음.
+    //
+    // 대기 한도는 toleranceMs 가 아니라 soloWaitMs 임. 페어링은 프록시 시각
+    // 기준이라 BE 도착이 tolerance 보다 늦은 짝도 맞을 수 있음. OPS-W019
+    // 4회차에서 subject 2 만 BE 도착을 300ms 늦추자 먼저 온 쪽이 200ms 에
+    // 단독으로 나가 정렬 쌍이 1% 로 떨어졌음 (EEG-W006 8장).
     const keptBuf1 = this.emitSolo(newBuf1, 1, now, aligned);
     const keptBuf2 = this.emitSolo(newBuf2, 2, now, aligned);
 
@@ -227,7 +246,7 @@ class TimestampAligner {
   }
 
   /**
-   * 미매칭 샘플 중 tolerance 를 초과 대기한 것을 단독 emit함.
+   * 미매칭 샘플 중 soloWaitMs 를 초과 대기한 것을 단독 emit함.
    *
    * @param own - 이 subject 의 미매칭 버퍼
    * @param subjectIndex - 1 또는 2 (1-based)
@@ -243,22 +262,60 @@ class TimestampAligner {
   ): BufferEntry[] {
     const kept: BufferEntry[] = [];
     for (const entry of own) {
-      if (now - entry.ts > this.toleranceMs) {
-        /* eslint-disable camelcase */
-        const sample: AlignedSample = {
-          groupId: this.groupId,
-          timestamp_ms: alignMs(entry),
-          subject_1: subjectIndex === 1 ? entry.sample : null,
-          subject_2: subjectIndex === 2 ? entry.sample : null,
-        };
-        /* eslint-enable camelcase */
-        aligned.push(sample);
-        SocketService.emitToGroup(this.groupId, 'aligned_pair', sample);
+      if (now - entry.ts > this.soloWaitMs) {
+        this.emitOne(entry, subjectIndex, aligned);
       } else {
         kept.push(entry);
       }
     }
     return kept;
+  }
+
+  /**
+   * 짝 맞춘 항목(pairedIdx)보다 먼저 받은 미매칭 항목을 단독 emit하고 사용 처리함.
+   *
+   * @param buf - 이 subject 의 버퍼
+   * @param used - 이미 emit 된 인덱스 집합
+   * @param pairedIdx - 짝을 맞춘 항목의 인덱스
+   * @param subjectIndex - 1 또는 2 (1-based)
+   * @param aligned - emit 된 샘플을 누적할 배열
+   */
+  private emitOlderSolo(
+    buf: BufferEntry[],
+    used: Set<number>,
+    pairedIdx: number,
+    subjectIndex: 1 | 2,
+    aligned: AlignedSample[]
+  ): void {
+    for (let i = 0; i < pairedIdx; i++) {
+      if (used.has(i)) continue;
+      used.add(i);
+      this.emitOne(buf[i], subjectIndex, aligned);
+    }
+  }
+
+  /**
+   * 한 항목을 상대 없이 단독 emit함.
+   *
+   * @param entry - 내보낼 항목
+   * @param subjectIndex - 1 또는 2 (1-based)
+   * @param aligned - emit 된 샘플을 누적할 배열
+   */
+  private emitOne(
+    entry: BufferEntry,
+    subjectIndex: 1 | 2,
+    aligned: AlignedSample[]
+  ): void {
+    /* eslint-disable camelcase */
+    const sample: AlignedSample = {
+      groupId: this.groupId,
+      timestamp_ms: alignMs(entry),
+      subject_1: subjectIndex === 1 ? entry.sample : null,
+      subject_2: subjectIndex === 2 ? entry.sample : null,
+    };
+    /* eslint-enable camelcase */
+    aligned.push(sample);
+    SocketService.emitToGroup(this.groupId, 'aligned_pair', sample);
   }
 }
 
@@ -279,12 +336,17 @@ export const timestampAlignerRegistry = {
    *
    * @param groupId - 실험 그룹 ID
    * @param toleranceMs - 타임스탬프 허용 오차 (기본 200ms)
+   * @param soloWaitMs - 단독 emit 전 짝 대기 시간. 미지정 시 toleranceMs 사용
    * @returns TimestampAligner 인스턴스
    */
-  getOrCreate(groupId: string, toleranceMs: number): TimestampAligner {
+  getOrCreate(
+    groupId: string,
+    toleranceMs: number,
+    soloWaitMs?: number
+  ): TimestampAligner {
     const existing = registry.get(groupId);
     if (existing) return existing;
-    const aligner = new TimestampAligner(groupId, toleranceMs);
+    const aligner = new TimestampAligner(groupId, toleranceMs, soloWaitMs);
     registry.set(groupId, aligner);
     return aligner;
   },
