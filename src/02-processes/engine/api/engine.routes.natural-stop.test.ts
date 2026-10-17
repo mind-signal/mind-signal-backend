@@ -391,17 +391,20 @@ describe('csv-upload 자연 종료와 stop-all 경합 (SESSION-W008)', () => {
   });
 
   it('subject 1 단일 중지 중에도 subject 2 의 자연 종료는 Natural 로 남음', async () => {
+    // subject 2 업로드는 잠금을 기다리므로 엔진 응답을 막지 않게 띄워만 둠
+    let pending!: Promise<unknown>;
     jest
       .mocked(engineProxyService.streamStop)
       .mockImplementationOnce(async () => {
-        await upload(2).expect(200);
+        pending = upload(2).expect(200).then();
+        await new Promise((r) => setTimeout(r, 20));
         return { ok: true };
       });
 
-    const res = await streamStop(1).expect(200);
+    await streamStop(1).expect(200);
+    await pending;
     await settle();
 
-    expect(res.body.allCompleted).toBe(true);
     expect(reasons()).toEqual([
       '1:COMPLETED:ManualEarly',
       '2:COMPLETED:Natural',
@@ -433,6 +436,16 @@ describe('csv-upload 자연 종료와 stop-all 경합 (SESSION-W008)', () => {
 
     expect(res.body.allCompleted).toBe(true);
     expect(stopMeasurementService).toHaveBeenCalledTimes(2);
+    // 그룹 정리로 엔진 등록이 지워져 legacy URL 로 폴백하므로 엔진 요청을 보내지 않음
+    expect(engineProxyService.streamStop).not.toHaveBeenCalled();
+  });
+
+  it('미완료 subject 의 stream/stop 은 엔진 종료 요청 뒤 전이함', async () => {
+    const res = await streamStop(1).expect(200);
+
+    expect(engineProxyService.streamStop).toHaveBeenCalledWith(GROUP_ID, 1);
+    expect(res.body.allCompleted).toBe(false);
+    expect(reasons()).toEqual(['1:COMPLETED:ManualEarly', '2:MEASURING:null']);
   });
 
   it('분석 파이프라인이 실패하면 저장된 등급을 ABORTED 로 바꿈', async () => {

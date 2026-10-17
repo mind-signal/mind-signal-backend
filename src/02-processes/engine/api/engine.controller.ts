@@ -219,26 +219,6 @@ const NATURAL_END_TOLERANCE_SECONDS = 15;
 type StopReason = 'Natural' | 'ManualEarly' | 'HeadsetLost' | 'ProcessError';
 
 /**
- * subject 하나를 COMPLETED 로 전이함. 이미 COMPLETED 면 건너뜀.
- * 그룹 가드 안에서 실행하므로 수동 중지와 엔진 업로드가 겹쳐도 한 번만 전이됨.
- *
- * @returns 이번 호출이 그룹의 마지막 전이를 했는지 반환
- * @throws AppError 404/400 — 세션 없음 또는 MEASURING 이 아닌 상태일 때
- */
-function completeSubject(
-  groupId: string,
-  subjectIndex: number,
-  stopReason: StopReason
-): Promise<{ allCompleted: boolean }> {
-  return withGroupLock(groupId, async () => {
-    const { Session: SessionModel } = await import('@06-entities/sessions');
-    const session = await SessionModel.findOne({ groupId, subjectIndex });
-    if (session?.status === 'COMPLETED') return { allCompleted: false };
-    return stopMeasurementService(groupId, subjectIndex, stopReason);
-  });
-}
-
-/**
  * 엔진 CSV 업로드를 받아 subject 측정을 끝냄 (SESSION-W008).
  *
  * 엔진 시크릿만으로 남의 그룹을 끝내지 못하게, 이 백엔드가 그 subject 측정을
@@ -433,17 +413,37 @@ export const engineController = {
 
       const releaseManualStop = holdManualStop(groupId, [subjectIndex]);
       try {
-        // 1. 엔진에 스트리밍 종료 요청함
-        const engineResult = await engineProxyService.streamStop(
+        // 재조회, 엔진 종료, 전이를 그룹 잠금 안에서 함. 자연 종료로 이미 끝난
+        // 그룹은 정리(cleanupGroup)로 엔진 등록이 지워져 streamStop 이 legacy
+        // URL 로 폴백하므로 엔진 요청 없이 끝냄. 이 subject 는 수동 중지로
+        // 표시돼 있어 엔진이 올리는 CSV 는 잠금을 기다리지 않으므로 교착이 없음
+        const { engineResult, finishedGroup } = await withGroupLock(
           groupId,
-          subjectIndex
-        );
+          async () => {
+            const { Session: SessionModel } =
+              await import('@06-entities/sessions');
+            const session = await SessionModel.findOne({
+              groupId,
+              subjectIndex,
+            });
+            if (session?.status === 'COMPLETED') {
+              return {
+                engineResult: { status: 'success' },
+                finishedGroup: false,
+              };
+            }
 
-        // 2. 세션 COMPLETED 전이 + Redis 구독 해제 + stopReason 기록함
-        const { allCompleted: finishedGroup } = await completeSubject(
-          groupId,
-          subjectIndex,
-          stopReason ?? 'Natural'
+            const result = await engineProxyService.streamStop(
+              groupId,
+              subjectIndex
+            );
+            const { allCompleted } = await stopMeasurementService(
+              groupId,
+              subjectIndex,
+              stopReason ?? 'Natural'
+            );
+            return { engineResult: result, finishedGroup: allCompleted };
+          }
         );
 
         // 3. 이번 호출이 마지막 전이를 했을 때만 3-tier 판정 트리거함
