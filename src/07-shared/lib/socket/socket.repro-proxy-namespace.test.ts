@@ -420,7 +420,15 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
       expect(mockPublish).toHaveBeenCalledTimes(2);
     });
 
-    it('첫 publish가 끝나기 전에 같은 envelope이 오면 publish 1회와 duplicate ack', async () => {
+    // 프록시가 ack 시간 초과나 재연결로 첫 emit의 ack를 버리고 같은 큐 항목을
+    // 다시 보내는 경우를 재현함. 첫 emit은 ack 콜백 없이 보냄
+    const IN_FLIGHT_ACK = {
+      ok: false,
+      retryable: true,
+      error: 'in_flight',
+    };
+
+    it('처리 중 사본은 in_flight 재시도 ack, 첫 publish 완료 뒤 사본은 duplicate', async () => {
       let release: (value: number) => void = () => {};
       mockPublish.mockReturnValueOnce(
         new Promise<number>((resolve) => {
@@ -429,15 +437,15 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
       );
       const envelope = { ...base, seq: 11, de_ts_ns: '1760000000000000011' };
 
-      const first = send(envelope);
-      // 첫 publish가 대기 중인 동안 두 번째가 도착함
-      expect(await send(envelope)).toEqual({ ok: true, duplicate: true });
+      client.emit('proxy:sample', envelope);
+      // 사본 ack가 ok면 프록시가 큐 항목을 dequeue해 첫 publish 실패 시 손실됨
+      expect(await send(envelope)).toEqual(IN_FLIGHT_ACK);
       release(1);
-      expect(await first).toEqual({ ok: true });
+      expect(await send(envelope)).toEqual({ ok: true, duplicate: true });
       expect(mockPublish).toHaveBeenCalledTimes(1);
     });
 
-    it('처리 중 publish가 실패하면 기록을 지워 재전송을 publish함', async () => {
+    it('처리 중 publish가 실패하면 기록을 지워 사본을 publish함', async () => {
       let fail: (err: Error) => void = () => {};
       mockPublish.mockReturnValueOnce(
         new Promise<number>((_, reject) => {
@@ -447,14 +455,9 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
       mockPublish.mockResolvedValue(1);
       const envelope = { ...base, seq: 12, de_ts_ns: '1760000000000000012' };
 
-      const first = send(envelope);
-      expect(await send(envelope)).toEqual({ ok: true, duplicate: true });
+      client.emit('proxy:sample', envelope);
+      expect(await send(envelope)).toEqual(IN_FLIGHT_ACK);
       fail(new Error('redis down'));
-      expect(await first).toEqual({
-        ok: false,
-        retryable: true,
-        error: 'publish_failed',
-      });
       expect(await send(envelope)).toEqual({ ok: true });
       expect(mockPublish).toHaveBeenCalledTimes(2);
     });

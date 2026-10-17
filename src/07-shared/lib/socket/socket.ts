@@ -5,7 +5,7 @@ import { config } from '@07-shared/config/config';
 import { OPERATOR_SOCKET_TOKEN_TYPE } from '@07-shared/constants/operator-socket-token';
 import { redisService } from '@07-shared/lib/redis';
 import { ProxySampleSchema, ProxyStatusSchema } from './proxy-envelope.schema';
-import { hasSample, markSample, unmarkSample } from './proxy-sample-dedup';
+import { markSample, sampleState, unmarkSample } from './proxy-sample-dedup';
 
 /**
  * /proxy 수신 요약을 남기는 주기(ms).
@@ -204,6 +204,7 @@ export class SocketService {
           received: number;
           published: number;
           duplicate: number;
+          inFlight: number;
           invalid: number;
           channels: Set<string>;
         }
@@ -215,6 +216,7 @@ export class SocketService {
             received: 0,
             published: 0,
             duplicate: 0,
+            inFlight: 0,
             invalid: 0,
             channels: new Set<string>(),
           };
@@ -230,7 +232,7 @@ export class SocketService {
           console.log(
             `[/proxy] summary subject=${subjectIndex} received=${t.received} ` +
               `published=${t.published} duplicate=${t.duplicate} ` +
-              `invalid=${t.invalid} ` +
+              `in_flight=${t.inFlight} invalid=${t.invalid} ` +
               `channels=[${[...t.channels].join(',')}]`
           );
           // 값만 비우고 키는 남긴다. 0으로 떨어진 subject가 목록에서 사라지면
@@ -239,6 +241,7 @@ export class SocketService {
             received: 0,
             published: 0,
             duplicate: 0,
+            inFlight: 0,
             invalid: 0,
             channels: new Set<string>(),
           });
@@ -287,18 +290,27 @@ export class SocketService {
           tallyFor(subjectIndex).received++;
           // 엔진 재시도와 프록시 replay로 다시 온 샘플은 publish하지 않음 (EEG-W007).
           // 키가 없는 구버전 엔진 envelope은 거르지 않음.
-          // publish 시작 전에 기록해 처리 중인 샘플도 중복으로 판정함. 중계기가
-          // 원본 직후 같은 프레임을 보내면 첫 publish 완료 전에 겹쳐 옴 (T5 2차)
+          // 중계기가 원본 직후 같은 프레임을 보내면 첫 publish 완료 전에 겹쳐 오므로
+          // (T5 2차) publish 시작 전에 처리 중으로 기록함.
+          // 처리 중 사본에는 duplicate가 아닌 retryable을 반환함. 프록시는 ack
+          // 시간 초과나 재연결 때 같은 큐 항목을 다시 보내므로, 사본에 duplicate를
+          // 주면 그 항목이 dequeue되고 첫 publish가 실패할 때 샘플이 사라짐
           const dedupKey =
             seq !== undefined && deTsNs !== undefined
               ? ([groupId, subjectIndex, seq, deTsNs] as const)
               : undefined;
-          if (dedupKey && hasSample(...dedupKey)) {
+          const state = dedupKey && sampleState(...dedupKey);
+          if (state === 'done') {
             tallyFor(subjectIndex).duplicate++;
             ack?.({ ok: true, duplicate: true });
             return;
           }
-          if (dedupKey) markSample(...dedupKey);
+          if (state === 'in_flight') {
+            tallyFor(subjectIndex).inFlight++;
+            ack?.({ ok: false, retryable: true, error: 'in_flight' });
+            return;
+          }
+          if (dedupKey) markSample(...dedupKey, 'in_flight');
           try {
             // redisService.client는 publish 전용 - 모든 subscribe는 duplicate() 경유라
             // 이 공유 client는 PubSub 모드에 진입하지 않음 (measurement.service.ts 정합).
@@ -326,6 +338,7 @@ export class SocketService {
             const publishedTally = tallyFor(subjectIndex);
             publishedTally.published++;
             publishedTally.channels.add(channel);
+            if (dedupKey) markSample(...dedupKey, 'done');
             ack?.({ ok: true });
           } catch (err) {
             // Redis 일시 장애는 재시도 허용함 - 소켓은 죽이지 않음
