@@ -20,6 +20,7 @@ export interface Session {
   measuredAt: Date | null; // 측정 시작 시점
   stopReason: 'Natural' | 'ManualEarly' | 'HeadsetLost' | 'ProcessError' | null;
   measuredDurationSeconds: number | null;
+  analysisTier: 'VALID' | 'PARTIAL' | 'ABORTED' | null; // 그룹 등급 판정 결과임 (SESSION-W008)
   experimentMode: ExperimentMode; // 실험 모드 (BTI | DUAL_2PC)
 }
 
@@ -93,6 +94,11 @@ const sessionSchema = new Schema<Session, SessionModel, SessionMethods>(
     },
     measuredDurationSeconds: {
       type: Number,
+      default: null,
+    },
+    analysisTier: {
+      type: String,
+      enum: ['VALID', 'PARTIAL', 'ABORTED', null],
       default: null,
     },
     experimentMode: {
