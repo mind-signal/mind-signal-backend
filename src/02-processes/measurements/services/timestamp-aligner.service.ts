@@ -66,10 +66,35 @@ export interface AlignedSample {
 // Internal class
 // ---------------------------------------------------------------------------
 
-/** 버퍼 엔트리 타입 */
+/**
+ * 버퍼 엔트리 타입.
+ *
+ * ts는 BE 수신 시각(Date.now())이라 단독 emit 대기 판정에 씀.
+ * ingressNs는 프록시 수신 시각(epoch ns)으로, 있으면 페어링 기준이 됨 (EEG-W006).
+ * 두 PC 샘플이 같은 프록시 시계로 찍히므로 BE 도착 지연과 재전송 순서에 흔들리지 않음.
+ */
 interface BufferEntry {
   ts: number;
+  ingressNs?: bigint;
   sample: SubjectSample;
+}
+
+/**
+ * 두 항목의 시각 차(ns)를 반환함.
+ * 둘 다 프록시 수신 시각이 있으면 그것으로, 하나라도 없으면 BE 수신 시각으로 잼.
+ * BigInt로 직접 비교해 epoch ns(약 2^60)의 Number 변환 정밀도 손실을 피함.
+ */
+function gapNs(a: BufferEntry, b: BufferEntry): bigint {
+  const d =
+    a.ingressNs !== undefined && b.ingressNs !== undefined
+      ? a.ingressNs - b.ingressNs
+      : BigInt(a.ts - b.ts) * 1_000_000n;
+  return d < 0n ? -d : d;
+}
+
+/** 항목의 대표 시각(ms). 프록시 수신 시각이 있으면 그것을 씀 */
+function alignMs(e: BufferEntry): number {
+  return e.ingressNs !== undefined ? Number(e.ingressNs / 1_000_000n) : e.ts;
 }
 
 /**
@@ -96,16 +121,24 @@ class TimestampAligner {
    * @param subjectIndex - 1 또는 2 (1-based)
    * @param sample - 대역 파워와 EMOTIV 지표를 담은 subject 샘플
    * @param serverTimestamp - BE ingest 시각 (Date.now())
+   * @param proxyIngressTsNs - 프록시 수신 시각(epoch ns 십진 문자열). 프록시를 거치지 않은 샘플은 없음
    */
   ingest(
     subjectIndex: number,
     sample: SubjectSample,
-    serverTimestamp: number
+    serverTimestamp: number,
+    proxyIngressTsNs?: string
   ): void {
     if (!this.buffer.has(subjectIndex)) {
       this.buffer.set(subjectIndex, []);
     }
-    this.buffer.get(subjectIndex)!.push({ ts: serverTimestamp, sample });
+    this.buffer.get(subjectIndex)!.push({
+      ts: serverTimestamp,
+      ...(proxyIngressTsNs !== undefined
+        ? { ingressNs: BigInt(proxyIngressTsNs) }
+        : {}),
+      sample,
+    });
   }
 
   /**
@@ -120,6 +153,7 @@ class TimestampAligner {
    */
   flush(): AlignedSample[] {
     const now = Date.now();
+    const toleranceNs = BigInt(this.toleranceMs) * 1_000_000n;
     const aligned: AlignedSample[] = [];
 
     // 만료 drop 없음. 미매칭 샘플은 아래 단독 emit 이 tolerance 초과 즉시
@@ -137,12 +171,12 @@ class TimestampAligner {
     for (let i1 = 0; i1 < fresh1.length; i1++) {
       const entry1 = fresh1[i1];
       let bestIdx = -1;
-      let bestDiff = Infinity;
+      let bestDiff = toleranceNs + 1n;
 
       for (let i = 0; i < fresh2.length; i++) {
         if (usedIdx2.has(i)) continue;
-        const diff = Math.abs(entry1.ts - fresh2[i].ts);
-        if (diff <= this.toleranceMs && diff < bestDiff) {
+        const diff = gapNs(entry1, fresh2[i]);
+        if (diff < bestDiff) {
           bestDiff = diff;
           bestIdx = i;
         }
@@ -153,7 +187,7 @@ class TimestampAligner {
         usedIdx2.add(bestIdx);
         const entry2 = fresh2[bestIdx];
         // 두 타임스탬프의 평균을 aligned timestamp로 사용함
-        const alignedTs = Math.round((entry1.ts + entry2.ts) / 2);
+        const alignedTs = Math.round((alignMs(entry1) + alignMs(entry2)) / 2);
         // snake_case 필드명은 FE Socket.io 페이로드 계약 — eslint-disable 필수
         /* eslint-disable camelcase */
         const sample: AlignedSample = {
@@ -173,7 +207,8 @@ class TimestampAligner {
     const newBuf2 = fresh2.filter((_, idx) => !usedIdx2.has(idx));
 
     // 단독 emit — 페어링 윈도(toleranceMs)를 넘겨 대기한 미매칭 샘플은 혼자
-    // 내보냄. ingest 시각은 서버 Date.now() 라 단조 증가하므로, tolerance 를
+    // 내보냄. 대기 판정은 프록시 시각이 아닌 BE 수신 시각(ts)으로 함.
+    // ts 는 서버 Date.now() 라 단조 증가하므로, tolerance 를
     // 넘긴 샘플은 앞으로 올 어떤 파트너와도 맞을 수 없음. 윈도 내 어린 샘플은
     // 유지해 late pair 허용 (CodeRabbit #68 — 일시 지연을 single-headset 으로
     // 오판하지 않음).
@@ -212,7 +247,7 @@ class TimestampAligner {
         /* eslint-disable camelcase */
         const sample: AlignedSample = {
           groupId: this.groupId,
-          timestamp_ms: entry.ts,
+          timestamp_ms: alignMs(entry),
           subject_1: subjectIndex === 1 ? entry.sample : null,
           subject_2: subjectIndex === 2 ? entry.sample : null,
         };
@@ -262,16 +297,18 @@ export const timestampAlignerRegistry = {
    * @param subjectIndex - 1 또는 2 (1-based)
    * @param sample - 대역 파워와 EMOTIV 지표를 담은 subject 샘플
    * @param serverTimestamp - BE ingest 시각 (Date.now())
+   * @param proxyIngressTsNs - 프록시 수신 시각(epoch ns 십진 문자열). 있으면 페어링 기준
    */
   ingest(
     groupId: string,
     subjectIndex: number,
     sample: SubjectSample,
-    serverTimestamp: number
+    serverTimestamp: number,
+    proxyIngressTsNs?: string
   ): void {
     const aligner = registry.get(groupId);
     if (!aligner) return; // aligner 미생성 시 무시함 (race condition 방어)
-    aligner.ingest(subjectIndex, sample, serverTimestamp);
+    aligner.ingest(subjectIndex, sample, serverTimestamp, proxyIngressTsNs);
   },
 
   /**

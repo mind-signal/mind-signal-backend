@@ -4,10 +4,17 @@ import { z } from 'zod';
 /**
  * proxy be-forwarder가 `proxy:sample`로 보내는 envelope의 집중 검증 스키마.
  *
- * publish에 필요한 필드(group_id, subject_idx, payload)만 검증함.
- * de_ts_ns/proxy_ingress_ts_ns/seq/sync_meta는 BE 미소비라 미검증함 (Zod가 strip).
+ * publish에 필요한 필드(group_id, subject_idx, payload)와 정렬 기준
+ * proxy_ingress_ts_ns만 검증함. de_ts_ns/seq/sync_meta는 BE 미소비라
+ * 미검증함 (Zod가 strip).
  * 계약 출처: mind-signal-proxy/src/types/envelope.ts
  */
+
+/**
+ * 프록시 수신 시각(epoch ns 십진 문자열). aligner 페어링 기준임 (EEG-W006).
+ * 길이 상한으로 BigInt 변환 전에 범위를 막음.
+ */
+export const IngressTsNsSchema = z.string().regex(/^\d{1,21}$/);
 export const WavePowerSchema = z.object({
   delta: z.number(),
   theta: z.number(),
@@ -39,6 +46,8 @@ export const BrainSyncAllSchema = z.object({
   type: z.literal('brain_sync_all'),
   waves: WavePowerSchema,
   metrics: EmotivMetricsSchema.optional(),
+  // /proxy 핸들러가 재발행한 프레임에만 있음. DE 직접 발행 프레임에는 없음
+  proxy_ingress_ts_ns: IngressTsNsSchema.optional(),
 });
 
 export const ProxySampleSchema = z.object({
@@ -49,6 +58,8 @@ export const ProxySampleSchema = z.object({
   subject_idx: z.number().int().min(1).max(2),
   payload: WavePowerSchema,
   metrics: EmotivMetricsSchema.optional(),
+  // 프록시가 항상 찍지만 구버전 프록시와 호환하려고 optional임
+  proxy_ingress_ts_ns: IngressTsNsSchema.optional(),
 });
 
 export type ProxySample = z.infer<typeof ProxySampleSchema>;
