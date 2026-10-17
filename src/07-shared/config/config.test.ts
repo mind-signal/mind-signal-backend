@@ -37,4 +37,25 @@ describe('config — Bedrock 설정과 chat-only 가드', () => {
 
     expect(loadConfig).toThrow(/CHAT_ONLY_MODE/);
   });
+
+  it('MEASUREMENT_EXPECTED_SECONDS 미설정이면 600초임 (SESSION-W008)', () => {
+    delete process.env.MEASUREMENT_EXPECTED_SECONDS;
+
+    expect(loadConfig().measurement.expectedSeconds).toBe(600);
+  });
+
+  it('MEASUREMENT_EXPECTED_SECONDS 값을 숫자로 읽음', () => {
+    process.env.MEASUREMENT_EXPECTED_SECONDS = '90';
+
+    expect(loadConfig().measurement.expectedSeconds).toBe(90);
+  });
+
+  it('MEASUREMENT_EXPECTED_SECONDS 가 숫자가 아니면 경고 후 600초로 폴백함', () => {
+    process.env.MEASUREMENT_EXPECTED_SECONDS = 'ten';
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(loadConfig().measurement.expectedSeconds).toBe(600);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
 });
