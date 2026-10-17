@@ -150,7 +150,8 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
           groupId,
           subjectIndex,
           sample,
-          serverTimestamp
+          serverTimestamp,
+          frame.data.proxy_ingress_ts_ns
         );
       } catch (err) {
         console.error(`DUAL_2PC ${channel} parse error:`, err);

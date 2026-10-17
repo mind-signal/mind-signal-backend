@@ -443,6 +443,86 @@ describe('[TS-STREAM-01] timestampAlignerRegistry — BE-aligner', () => {
   });
 
   // ============================================================
+  // EEG-W006: 프록시 수신 시각(ns) 기준 페어링
+  // BE 수신 시각은 두 샘플 모두 같게 두고 프록시 시각만 바꿔서,
+  // BE 시각으로 매칭했다면 결과가 달라지는 경우만 검증함
+  // ============================================================
+
+  describe('EEG-W006: proxy_ingress_ts_ns 기준 페어링', () => {
+    const baseNs = BigInt(Date.now()) * 1_000_000n;
+    const ns = (offsetMs: number): string =>
+      (baseNs + BigInt(offsetMs) * 1_000_000n).toString();
+
+    it('프록시 시각 차 50ms → pair 로 매칭됨', () => {
+      const groupId = 'grp-ns-a';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      const now = Date.now();
+
+      timestampAlignerRegistry.ingest(groupId, 1, makeSample(1), now, ns(0));
+      timestampAlignerRegistry.ingest(groupId, 2, makeSample(2), now, ns(50));
+      const result = timestampAlignerRegistry.flush(groupId);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].subject_1).not.toBeNull();
+      expect(result[0].subject_2).not.toBeNull();
+    });
+
+    it('BE 도착은 같아도 프록시 시각 차 300ms 면 매칭 안 됨', () => {
+      const groupId = 'grp-ns-b';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      const now = Date.now();
+
+      timestampAlignerRegistry.ingest(groupId, 1, makeSample(1), now, ns(0));
+      timestampAlignerRegistry.ingest(groupId, 2, makeSample(2), now, ns(300));
+
+      expect(timestampAlignerRegistry.flush(groupId)).toHaveLength(0);
+    });
+
+    it('BE 도착이 300ms 벌어져도 프록시 시각이 같으면 pair 로 매칭됨 (재전송 지연)', () => {
+      const groupId = 'grp-ns-late';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      const now = Date.now();
+
+      timestampAlignerRegistry.ingest(groupId, 1, makeSample(1), now, ns(0));
+      timestampAlignerRegistry.ingest(
+        groupId,
+        2,
+        makeSample(2),
+        now + 300,
+        ns(10)
+      );
+      const result = timestampAlignerRegistry.flush(groupId);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].subject_1).not.toBeNull();
+      expect(result[0].subject_2).not.toBeNull();
+    });
+
+    it('timestamp_ms 는 두 프록시 시각(ms)의 평균임', () => {
+      const groupId = 'grp-ns-ts';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      const now = Date.now();
+
+      timestampAlignerRegistry.ingest(groupId, 1, makeSample(1), now, ns(0));
+      timestampAlignerRegistry.ingest(groupId, 2, makeSample(2), now, ns(100));
+      const result = timestampAlignerRegistry.flush(groupId);
+
+      expect(result[0].timestamp_ms).toBe(Number(baseNs / 1_000_000n) + 50);
+    });
+
+    it('한쪽만 프록시 시각이 있으면 BE 수신 시각으로 비교함', () => {
+      const groupId = 'grp-ns-mixed';
+      timestampAlignerRegistry.getOrCreate(groupId, 200);
+      const now = Date.now();
+
+      timestampAlignerRegistry.ingest(groupId, 1, makeSample(1), now, ns(300));
+      timestampAlignerRegistry.ingest(groupId, 2, makeSample(2), now);
+
+      expect(timestampAlignerRegistry.flush(groupId)).toHaveLength(1);
+    });
+  });
+
+  // ============================================================
   // v8 C-1: brain_sync_all 타입 가드 소스 검증
   // ============================================================
 

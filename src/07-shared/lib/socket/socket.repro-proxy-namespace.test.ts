@@ -178,6 +178,49 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
     });
   });
 
+  it('Scenario D2: proxy_ingress_ts_ns는 publish 메시지에 그대로 실림 (EEG-W006)', (done) => {
+    mockPublish.mockResolvedValue(1);
+    const client: ClientSocket = ioClient(`${serverUrl}/proxy`, {
+      transports: ['websocket'],
+      auth: { engineSecret: 'test-engine-secret-abc123' },
+      forceNew: true,
+      reconnection: false,
+    });
+    const envelope = {
+      group_id: 'g-abc',
+      subject_idx: 1,
+      payload: { delta: 1, theta: 2, alpha: 3, beta: 4, gamma: 5 },
+      proxy_ingress_ts_ns: '1760000000123456789',
+    };
+
+    client.once('connect', () => {
+      client
+        .timeout(2_000)
+        .emit('proxy:sample', envelope, (err: Error | null) => {
+          try {
+            expect(err).toBeNull();
+            expect(mockPublish).toHaveBeenCalledWith(
+              'mind-signal:g-abc:subject:1',
+              JSON.stringify({
+                type: 'brain_sync_all',
+                waves: { delta: 1, theta: 2, alpha: 3, beta: 4, gamma: 5 },
+                proxy_ingress_ts_ns: '1760000000123456789',
+              })
+            );
+            client.disconnect();
+            done();
+          } catch (e) {
+            client.disconnect();
+            done(e as Error);
+          }
+        });
+    });
+
+    client.once('connect_error', (err: Error) => {
+      done(new Error(`unexpected connect_error: ${err.message}`));
+    });
+  });
+
   it('Scenario E: 기본 namespace의 join-room은 인증 후 정상 동작함', (done) => {
     const client: ClientSocket = ioClient(serverUrl, {
       transports: ['websocket'],
