@@ -310,7 +310,12 @@ export class SocketService {
             ack?.({ ok: false, retryable: true, error: 'in_flight' });
             return;
           }
-          if (dedupKey) markSample(...dedupKey, 'in_flight');
+          // 처리 중 기록이 상한이면 publish하지 않고 재시도를 요청함
+          if (dedupKey && !markSample(...dedupKey, 'in_flight')) {
+            tallyFor(subjectIndex).inFlight++;
+            ack?.({ ok: false, retryable: true, error: 'in_flight_capacity' });
+            return;
+          }
           try {
             // redisService.client는 publish 전용 - 모든 subscribe는 duplicate() 경유라
             // 이 공유 client는 PubSub 모드에 진입하지 않음 (measurement.service.ts 정합).

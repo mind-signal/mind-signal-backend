@@ -42,7 +42,13 @@ jest.mock('@07-shared/lib/redis', () => ({
 }));
 
 import { redisService } from '@07-shared/lib/redis';
-import { resetSampleDedupForTest } from './proxy-sample-dedup';
+import {
+  markSample,
+  MAX_GROUPS,
+  MAX_IN_FLIGHT,
+  MAX_KEYS_PER_SUBJECT,
+  resetSampleDedupForTest,
+} from './proxy-sample-dedup';
 import { SocketService } from './socket';
 
 const mockPublish = jest.mocked(redisService.client.publish);
@@ -443,6 +449,53 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
       release(1);
       expect(await send(envelope)).toEqual({ ok: true, duplicate: true });
       expect(mockPublish).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      [
+        '그룹',
+        () => {
+          for (let i = 0; i <= MAX_GROUPS; i++) {
+            markSample(`g-other-${i}`, 1, 0, '0', 'done');
+          }
+        },
+      ],
+      [
+        'subject 키',
+        () => {
+          for (let seq = 100; seq <= 100 + MAX_KEYS_PER_SUBJECT; seq++) {
+            markSample(base.group_id, base.subject_idx, seq, `${seq}`, 'done');
+          }
+        },
+      ],
+    ])(
+      '%s 상한을 넘겨도 처리 중 키가 남아 사본은 in_flight 재시도 ack (CodeRabbit PR #122)',
+      async (_label, overflow) => {
+        mockPublish.mockResolvedValue(1);
+        mockPublish.mockReturnValueOnce(new Promise<number>(() => {}));
+        const envelope = { ...base, seq: 13, de_ts_ns: '1760000000000000013' };
+
+        client.emit('proxy:sample', envelope);
+        // 첫 envelope이 처리 중이 된 뒤에 상한을 넘김
+        expect(await send({ ...envelope, seq: 14 })).toEqual({ ok: true });
+        overflow();
+        expect(await send(envelope)).toEqual(IN_FLIGHT_ACK);
+        expect(mockPublish).toHaveBeenCalledTimes(2);
+      }
+    );
+
+    it('처리 중 기록이 상한이면 publish 없이 in_flight_capacity 재시도 ack', async () => {
+      for (let seq = 0; seq < MAX_IN_FLIGHT; seq++) {
+        markSample('g-busy', 1, seq, `${seq}`, 'in_flight');
+      }
+      const envelope = { ...base, seq: 15, de_ts_ns: '1760000000000000015' };
+
+      expect(await send(envelope)).toEqual({
+        ok: false,
+        retryable: true,
+        error: 'in_flight_capacity',
+      });
+      expect(mockPublish).not.toHaveBeenCalled();
     });
 
     it('처리 중 publish가 실패하면 기록을 지워 사본을 publish함', async () => {
