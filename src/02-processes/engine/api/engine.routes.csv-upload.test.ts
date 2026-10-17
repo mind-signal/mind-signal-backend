@@ -39,6 +39,17 @@ jest.mock('@07-shared/config/config', () => ({
   },
 }));
 
+// 업로드 뒤 자연 종료 처리는 engine.routes.natural-stop.test.ts 가 검증함.
+// 여기서는 세션이 없는 것으로 두어 CSV 저장만 봄
+jest.mock('@06-entities/sessions', () => ({
+  Session: { findOne: jest.fn().mockResolvedValue(null) },
+}));
+jest.mock('@02-processes/measurements/services/measurement.service', () => ({
+  stopMeasurementService: jest
+    .fn()
+    .mockRejectedValue(new Error('세션을 찾을 수 없습니다.')),
+}));
+
 import engineRouter from './engine.routes';
 
 // 테스트용 CSV 저장 디렉토리 — 실제 Team-project/csv 오염 방지.
