@@ -13,6 +13,7 @@
  * Scenario E - 기본 namespace join-room 동작 영향 없음
  * Scenario F - 비정상 envelope은 invalid_frame non-retryable 반환 + publish 미호출함
  * Scenario G - 범위 밖 subject_idx(3+)는 invalid_frame 거부 + publish 미호출함
+ * Scenario H - 재시도/replay 중복 envelope은 1회만 publish함 (EEG-W007)
  */
 
 import http from 'http';
@@ -41,6 +42,13 @@ jest.mock('@07-shared/lib/redis', () => ({
 }));
 
 import { redisService } from '@07-shared/lib/redis';
+import {
+  markSample,
+  MAX_GROUPS,
+  MAX_IN_FLIGHT,
+  MAX_KEYS_PER_SUBJECT,
+  resetSampleDedupForTest,
+} from './proxy-sample-dedup';
 import { SocketService } from './socket';
 
 const mockPublish = jest.mocked(redisService.client.publish);
@@ -64,6 +72,7 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
   beforeEach(() => {
     // 시나리오 간 mock 호출 이력 누수 방지함
     jest.clearAllMocks();
+    resetSampleDedupForTest();
   });
 
   afterAll((done) => {
@@ -342,6 +351,192 @@ describe('SocketService /proxy namespace handler (Phase 18.1 + 18.2)', () => {
 
     client.once('connect_error', (err: Error) => {
       done(new Error(`unexpected connect_error: ${err.message}`));
+    });
+  });
+
+  describe('Scenario H: 중복 envelope 거름 (EEG-W007)', () => {
+    type SampleAck = {
+      ok: boolean;
+      duplicate?: boolean;
+      retryable?: boolean;
+      error?: string;
+    };
+    let client: ClientSocket;
+    const base = {
+      group_id: 'g-dup',
+      subject_idx: 1,
+      payload: { delta: 1, theta: 2, alpha: 3, beta: 4, gamma: 5 },
+    };
+
+    beforeEach((done) => {
+      client = ioClient(`${serverUrl}/proxy`, {
+        transports: ['websocket'],
+        auth: { engineSecret: 'test-engine-secret-abc123' },
+        forceNew: true,
+        reconnection: false,
+      });
+      client.once('connect', () => done());
+      client.once('connect_error', done);
+    });
+
+    afterEach(() => {
+      client.disconnect();
+    });
+
+    const send = (envelope: object): Promise<SampleAck> =>
+      client.timeout(2_000).emitWithAck('proxy:sample', envelope);
+
+    it('같은 envelope 두 번이면 publish 1회와 두 번째 ack duplicate:true', async () => {
+      mockPublish.mockResolvedValue(1);
+      const envelope = { ...base, seq: 7, de_ts_ns: '1760000000000000007' };
+
+      expect(await send(envelope)).toEqual({ ok: true });
+      expect(await send(envelope)).toEqual({ ok: true, duplicate: true });
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+    });
+
+    it('음수 seq도 publish하고 같은 envelope 두 번째는 duplicate:true', async () => {
+      mockPublish.mockResolvedValue(1);
+      // 프록시 계약은 seq 음수를 허용하므로 invalid_frame으로 버리면 샘플 손실임
+      const envelope = { ...base, seq: -1, de_ts_ns: '1760000000000000010' };
+
+      expect(await send(envelope)).toEqual({ ok: true });
+      expect(await send(envelope)).toEqual({ ok: true, duplicate: true });
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+    });
+
+    it('같은 seq와 다른 de_ts_ns(엔진 재시작)면 둘 다 publish함', async () => {
+      mockPublish.mockResolvedValue(1);
+
+      await send({ ...base, seq: 0, de_ts_ns: '1760000000000000001' });
+      expect(
+        await send({ ...base, seq: 0, de_ts_ns: '1760000000000000002' })
+      ).toEqual({ ok: true });
+      expect(mockPublish).toHaveBeenCalledTimes(2);
+    });
+
+    it('subject가 다르면 같은 키여도 둘 다 publish함', async () => {
+      mockPublish.mockResolvedValue(1);
+      const key = { seq: 3, de_ts_ns: '1760000000000000003' };
+
+      await send({ ...base, ...key });
+      expect(await send({ ...base, ...key, subject_idx: 2 })).toEqual({
+        ok: true,
+      });
+      expect(mockPublish).toHaveBeenCalledTimes(2);
+    });
+
+    // 프록시가 ack 시간 초과나 재연결로 첫 emit의 ack를 버리고 같은 큐 항목을
+    // 다시 보내는 경우를 재현함. 첫 emit은 ack 콜백 없이 보냄
+    const IN_FLIGHT_ACK = {
+      ok: false,
+      retryable: true,
+      error: 'in_flight',
+    };
+
+    it('처리 중 사본은 in_flight 재시도 ack, 첫 publish 완료 뒤 사본은 duplicate', async () => {
+      let release: (value: number) => void = () => {};
+      mockPublish.mockReturnValueOnce(
+        new Promise<number>((resolve) => {
+          release = resolve;
+        })
+      );
+      const envelope = { ...base, seq: 11, de_ts_ns: '1760000000000000011' };
+
+      client.emit('proxy:sample', envelope);
+      // 사본 ack가 ok면 프록시가 큐 항목을 dequeue해 첫 publish 실패 시 손실됨
+      expect(await send(envelope)).toEqual(IN_FLIGHT_ACK);
+      release(1);
+      expect(await send(envelope)).toEqual({ ok: true, duplicate: true });
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      [
+        '그룹',
+        () => {
+          for (let i = 0; i <= MAX_GROUPS; i++) {
+            markSample(`g-other-${i}`, 1, 0, '0', 'done');
+          }
+        },
+      ],
+      [
+        'subject 키',
+        () => {
+          for (let seq = 100; seq <= 100 + MAX_KEYS_PER_SUBJECT; seq++) {
+            markSample(base.group_id, base.subject_idx, seq, `${seq}`, 'done');
+          }
+        },
+      ],
+    ])(
+      '%s 상한을 넘겨도 처리 중 키가 남아 사본은 in_flight 재시도 ack (CodeRabbit PR #122)',
+      async (_label, overflow) => {
+        mockPublish.mockResolvedValue(1);
+        mockPublish.mockReturnValueOnce(new Promise<number>(() => {}));
+        const envelope = { ...base, seq: 13, de_ts_ns: '1760000000000000013' };
+
+        client.emit('proxy:sample', envelope);
+        // 첫 envelope이 처리 중이 된 뒤에 상한을 넘김
+        expect(await send({ ...envelope, seq: 14 })).toEqual({ ok: true });
+        overflow();
+        expect(await send(envelope)).toEqual(IN_FLIGHT_ACK);
+        expect(mockPublish).toHaveBeenCalledTimes(2);
+      }
+    );
+
+    it('처리 중 기록이 상한이면 publish 없이 in_flight_capacity 재시도 ack', async () => {
+      for (let seq = 0; seq < MAX_IN_FLIGHT; seq++) {
+        markSample('g-busy', 1, seq, `${seq}`, 'in_flight');
+      }
+      const envelope = { ...base, seq: 15, de_ts_ns: '1760000000000000015' };
+
+      expect(await send(envelope)).toEqual({
+        ok: false,
+        retryable: true,
+        error: 'in_flight_capacity',
+      });
+      expect(mockPublish).not.toHaveBeenCalled();
+    });
+
+    it('처리 중 publish가 실패하면 기록을 지워 사본을 publish함', async () => {
+      let fail: (err: Error) => void = () => {};
+      mockPublish.mockReturnValueOnce(
+        new Promise<number>((_, reject) => {
+          fail = reject;
+        })
+      );
+      mockPublish.mockResolvedValue(1);
+      const envelope = { ...base, seq: 12, de_ts_ns: '1760000000000000012' };
+
+      client.emit('proxy:sample', envelope);
+      expect(await send(envelope)).toEqual(IN_FLIGHT_ACK);
+      fail(new Error('redis down'));
+      expect(await send(envelope)).toEqual({ ok: true });
+      expect(mockPublish).toHaveBeenCalledTimes(2);
+    });
+
+    it('publish 실패 뒤 같은 envelope 재전송이면 publish함', async () => {
+      mockPublish.mockRejectedValueOnce(new Error('redis down'));
+      mockPublish.mockResolvedValue(1);
+      const envelope = { ...base, seq: 9, de_ts_ns: '1760000000000000009' };
+
+      expect(await send(envelope)).toEqual({
+        ok: false,
+        retryable: true,
+        error: 'publish_failed',
+      });
+      expect(await send(envelope)).toEqual({ ok: true });
+      expect(mockPublish).toHaveBeenCalledTimes(2);
+    });
+
+    it('seq나 de_ts_ns가 없는 envelope은 거르지 않음', async () => {
+      mockPublish.mockResolvedValue(1);
+
+      await send(base);
+      await send(base);
+      await send({ ...base, seq: 1 });
+      await send({ ...base, seq: 1 });
+      expect(mockPublish).toHaveBeenCalledTimes(4);
     });
   });
 });
