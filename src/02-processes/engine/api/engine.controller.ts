@@ -449,6 +449,17 @@ export const engineController = {
           if (session?.status === 'COMPLETED') {
             return { status: 'success' };
           }
+          // 종료할 수 없는 상태는 엔진 요청 전에 거절함. 먼저 보내면 엔진의
+          // 404나 503이 상태 오류(400)를 가림. 문구는 stopMeasurementService 와 같음
+          if (!session) {
+            throw new AppError('세션을 찾을 수 없습니다.', 404);
+          }
+          if (!session.canTransitionTo('COMPLETED')) {
+            throw new AppError(
+              `현재 ${session.status} 상태에서는 측정을 완료할 수 없습니다.`,
+              400
+            );
+          }
 
           const result = await engineProxyService.streamStop(
             groupId,

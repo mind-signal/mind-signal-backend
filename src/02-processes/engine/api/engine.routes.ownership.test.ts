@@ -38,7 +38,10 @@ jest.mock('@06-entities/sessions', () => ({
     find: jest
       .fn()
       .mockResolvedValue([{ subjectIndex: 1, status: 'MEASURING' }]),
-    findOne: jest.fn().mockResolvedValue({ status: 'MEASURING' }),
+    findOne: jest.fn().mockResolvedValue({
+      status: 'MEASURING',
+      canTransitionTo: () => true,
+    }),
   },
 }));
 

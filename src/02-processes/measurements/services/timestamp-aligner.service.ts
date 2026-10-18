@@ -145,7 +145,7 @@ class TimestampAligner {
    * @param proxyIngressTsNs - 프록시 수신 시각(epoch ns 십진 문자열). 프록시를 거치지 않은 샘플은 없음
    */
   ingest(
-    subjectIndex: number,
+    subjectIndex: 1 | 2,
     sample: SubjectSample,
     serverTimestamp: number,
     proxyIngressTsNs?: string
@@ -379,7 +379,7 @@ export const timestampAlignerRegistry = {
    */
   ingest(
     groupId: string,
-    subjectIndex: number,
+    subjectIndex: 1 | 2,
     sample: SubjectSample,
     serverTimestamp: number,
     proxyIngressTsNs?: string

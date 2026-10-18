@@ -111,7 +111,7 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
 
   // v7 H-PREP-1: subjectIndex는 1-based
   // 기존 Redis 채널 규칙(`mind-signal:{groupId}:subject:{subjectIndex}`) 그대로 유지
-  for (const subjectIndex of [1, 2]) {
+  for (const subjectIndex of [1, 2] as const) {
     const subscriber = redisService.client.duplicate();
     await subscriber.connect();
     // SESSION-W005 후속: connect 직후에 등록함. subscribe 뒤에 등록하면 구독에
@@ -416,7 +416,11 @@ function startDualMeasurement(groupId: string): void {
       // 등록된 subject만 대상으로 함 — dualRegistry에 그룹이 없으면
       // streamStop이 legacy 단일 슬롯 URL로 폴백해(engine-proxy.service.ts:194-199)
       // 무관한 1PC 측정에 종료 요청이 나감. getEngineUrl은 슬롯이 비었을 때만
-      // 503을 던지므로(engine-registry.service.ts:49-53) 차 있으면 실제로 나감
+      // 503을 던지므로(engine-registry.service.ts:49-53) 차 있으면 실제로 나감.
+      // 다만 실제 엔진 stop_stream은 `group_id:subject_index` 키가 없으면
+      // 404로 끝나 다른 그룹 측정을 멈추지 않음(mind-signal-data-engine
+      // server/services/stream.py:110-115). group_id를 무시하는
+      // scripts/mock_data_engine.py가 legacy 슬롯에 있을 때만 실제로 멈춤
       const registrations = engineRegistryService.getByGroup(groupId);
       if (registrations) {
         const { engineProxyService: proxyForStop } =
