@@ -134,6 +134,7 @@ import {
   startDualMeasurementByGroup,
 } from './measurement.service';
 import { SocketService } from '@07-shared/lib/socket';
+import { isManualStopping } from '@02-processes/engine/services/stop-guard.service';
 import { Session } from '@06-entities/sessions';
 
 /** DUAL_2PC 세션 도큐먼트 목 생성 헬퍼 */
@@ -239,6 +240,49 @@ describe('startDualMeasurement 런타임 streamStart 호출 검증', () => {
         error: expect.stringContaining('DE 2'),
       })
     );
+  });
+});
+
+describe('측정 시작 실패 정리 중 엔진 CSV 업로드 차단 (SESSION-W008)', () => {
+  it('실패 정리의 streamStop 동안 수동 중지 표시를 걸고 끝나면 풂', async () => {
+    jest.clearAllMocks();
+    engineRegistryService.cleanupGroup(GROUP_ID);
+    (Session.findById as jest.Mock).mockResolvedValue(
+      makeDualSession(GROUP_ID)
+    );
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      1,
+      'http://de1:5002',
+      ENGINE_SECRET
+    );
+    engineRegistryService.registerDual(
+      GROUP_ID,
+      2,
+      'http://de2:5002',
+      ENGINE_SECRET
+    );
+    const { engineProxyService } = jest.requireMock(
+      '@02-processes/engine/services/engine-proxy.service'
+    );
+    (engineProxyService.streamStartDual as jest.Mock)
+      .mockResolvedValueOnce({ status: 'started' })
+      .mockRejectedValueOnce(new Error('DE 2 unreachable'));
+    // 엔진은 stop 처리 중 CSV 를 올림 — 그 시점의 표시 여부를 기록함
+    const markedDuringStop: boolean[] = [];
+    (engineProxyService.streamStop as jest.Mock).mockImplementation(
+      async (_g: string, subjectIndex: number) => {
+        markedDuringStop.push(isManualStopping(GROUP_ID, subjectIndex));
+        return { status: 'stopped' };
+      }
+    );
+
+    await startMeasurementService('session-id-001');
+    await new Promise<void>((r) => setTimeout(r, 200));
+
+    expect(markedDuringStop).toEqual([true, true]);
+    expect(isManualStopping(GROUP_ID, 1)).toBe(false);
+    expect(isManualStopping(GROUP_ID, 2)).toBe(false);
   });
 });
 

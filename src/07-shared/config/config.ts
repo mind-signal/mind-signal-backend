@@ -74,6 +74,25 @@ const soloWaitMs = Number.isFinite(soloWaitRaw)
   ? soloWaitRaw
   : DEFAULT_SOLO_WAIT_MS;
 
+// 3.8 엔진 한 회 측정의 기대 시간(초)임. 엔진 EXPERIMENT_DURATION_MINUTES 기본
+// 10분과 맞춤. 이보다 일찍 온 엔진 CSV 업로드는 자연 종료가 아니라 오류
+// 종료로 기록함 (SESSION-W008)
+const DEFAULT_MEASUREMENT_EXPECTED_SECONDS = 600;
+const measurementExpectedRaw = Number(
+  process.env.MEASUREMENT_EXPECTED_SECONDS ??
+    DEFAULT_MEASUREMENT_EXPECTED_SECONDS
+);
+const measurementExpectedValid =
+  Number.isFinite(measurementExpectedRaw) && measurementExpectedRaw > 0;
+if (!measurementExpectedValid) {
+  console.warn(
+    `MEASUREMENT_EXPECTED_SECONDS 값이 올바르지 않아 기본값 ${DEFAULT_MEASUREMENT_EXPECTED_SECONDS}초를 사용함 (현재: ${process.env.MEASUREMENT_EXPECTED_SECONDS})`
+  );
+}
+const measurementExpectedSeconds = measurementExpectedValid
+  ? measurementExpectedRaw
+  : DEFAULT_MEASUREMENT_EXPECTED_SECONDS;
+
 // 4. 설정 객체 내보내기
 export const config = {
   env: nodeEnv,
@@ -128,6 +147,10 @@ export const config = {
         .map((s) => s.trim())
         .filter(Boolean)
     : undefined,
+  measurement: {
+    // 자연 종료 판정 기준 기대 측정 시간(초)임
+    expectedSeconds: measurementExpectedSeconds,
+  },
   // Phase 16 DUAL_2PC 타임스탬프 정렬 설정 (optional — 기본값 사용 가능)
   dualPc: {
     // plan-review M-4: 편도 50ms + NTP skew 50ms = 200ms 기본값

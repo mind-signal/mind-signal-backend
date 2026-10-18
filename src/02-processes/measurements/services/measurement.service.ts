@@ -5,6 +5,7 @@ import { BrainSyncAllSchema, SocketService } from '@07-shared/lib/socket';
 import { AppError } from '@07-shared/errors';
 import { engineRegistryService } from '@02-processes/engine/services/engine-registry.service';
 import { dualTriggerService } from '@02-processes/engine/services/dual-2pc-trigger.service';
+import { holdManualStop } from '@02-processes/engine/services/stop-guard.service';
 import { timestampAlignerRegistry } from './timestamp-aligner.service';
 import { stimulusBroadcasterService } from './stimulus-broadcaster.service';
 import type { SubjectSample } from './timestamp-aligner.service';
@@ -26,6 +27,19 @@ export type StartMeasurementResult =
 
 /** Redis 구독자 레지스트리 — 키: `${groupId}:${subjectIndex}` */
 const subscriberRegistry = new Map<string, BusSubscriber>();
+
+/**
+ * 1인(비-DUAL_2PC) 경로에서 이 백엔드가 그 subject 측정을 진행 중인지 반환함.
+ * 엔진 CSV 업로드를 자연 종료로 받기 전에 확인함 (SESSION-W008)
+ *
+ * @param groupId - 실험 그룹 ID
+ * @param subjectIndex - 피실험자 순번
+ * @returns 진행 중 여부 반환
+ */
+export const isLegacyMeasurementActive = (
+  groupId: string,
+  subjectIndex: number
+): boolean => subscriberRegistry.has(`${groupId}:${subjectIndex}`);
 
 // ---------------------------------------------------------------------------
 // 모듈 레벨 구독자 레지스트리 — DUAL_2PC 경로 (v7 H-1 반영)
@@ -309,6 +323,8 @@ function startDualMeasurement(groupId: string): void {
   // 최신 시작 그룹 기록 — 대기 중 superseded 판정용 (F1b)
   activeDualGroup = groupId;
   (async () => {
+    // 실패 정리 중 엔진이 올린 CSV 가 세션을 자연 종료로 끝내지 않게 표시함
+    let releaseManualStop: (() => void) | undefined;
     try {
       // 새 측정 시작 전 stale 그룹 aligner/구독 정리 — 단일 활성 보장 (F1)
       await teardownStaleGroups(groupId);
@@ -391,6 +407,7 @@ function startDualMeasurement(groupId: string): void {
       // 2026-08-05 실기기 회차에서 이 catch가 탔으나 어디에도 흔적이 없어
       // 원인 특정에 실패함 (backend #89)
       console.error(`[DUAL_2PC 실패] groupId=${groupId}`, err);
+      releaseManualStop = holdManualStop(groupId, [1, 2]);
 
       // SESSION-W005: 이미 시작된 원격 엔진을 먼저 세움. cleanupGroup이
       // dualRegistry를 지우면 streamStop이 engineUrl을 찾지 못해 legacy 폴백
@@ -436,6 +453,7 @@ function startDualMeasurement(groupId: string): void {
         { status: 'CANCELLED', stopReason: 'ProcessError' }
       );
     } finally {
+      releaseManualStop?.();
       dualMeasurementInFlight.delete(groupId);
     }
   })();

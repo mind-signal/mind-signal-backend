@@ -37,8 +37,16 @@ export const getAnalysisResult = async (
       'name'
     );
 
+    // 등급 판정 결과임. 판정 전이면 null 임 (SESSION-W008)
+    const tier = sessions.find((s) => s.analysisTier)?.analysisTier ?? null;
+
     if (!result) {
-      throw new AppError('분석 결과를 찾을 수 없습니다.', 404);
+      // ABORTED 처럼 결과가 만들어지지 않는 그룹도 등급은 알 수 있게 함
+      return res.status(404).json({
+        status: 'fail',
+        message: '분석 결과를 찾을 수 없습니다.',
+        tier,
+      });
     }
 
     const user1 = result.user1Id as any;
@@ -52,6 +60,7 @@ export const getAnalysisResult = async (
       status: 'success',
       data: {
         groupId: result.groupId,
+        tier,
         matchingScore: result.matchingScore,
         synchronyScore: result.synchronyScore,
         yScore: result.yScore,
