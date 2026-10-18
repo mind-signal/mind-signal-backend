@@ -641,6 +641,46 @@ describe('[TS-STREAM-01] timestampAlignerRegistry — BE-aligner', () => {
       ]);
     });
 
+    it('재전송으로 같은 subject 수신 순서가 뒤집혀도 새 샘플이 단독으로 먼저 나가지 않고 짝을 맞춤 (EEG-W008)', () => {
+      // 프록시는 앞 항목 ack 를 기다리지 않고 다음 항목을 보내며, publish_failed
+      // 항목은 재전송함. 그래서 subject 2 의 A2 가 B2 보다 늦게 BE 에 도착할 수 있음
+      const groupId = 'grp-reorder';
+      timestampAlignerRegistry.getOrCreate(groupId, 200, 1000);
+      const t0 = clock;
+      const emitted = [];
+
+      timestampAlignerRegistry.ingest(groupId, 1, makeSample(1), t0, ns(1000));
+      timestampAlignerRegistry.ingest(groupId, 2, makeSample(20), t0, ns(2000));
+      timestampAlignerRegistry.ingest(
+        groupId,
+        2,
+        makeSample(10),
+        t0 + 60,
+        ns(1000)
+      );
+      clock = t0 + 100;
+      emitted.push(...timestampAlignerRegistry.flush(groupId));
+      // B1 은 soloWaitMs(1000) 안에 도착함
+      timestampAlignerRegistry.ingest(
+        groupId,
+        1,
+        makeSample(2),
+        t0 + 300,
+        ns(2000)
+      );
+      clock = t0 + 400;
+      emitted.push(...timestampAlignerRegistry.flush(groupId));
+
+      // subject 별 delta 값으로 비교함 (a1=1, a2=10, b1=2, b2=20)
+      const delta = (x: SubjectSample | null) => x?.waves.delta ?? null;
+      expect(
+        emitted.map((e) => [delta(e.subject_1), delta(e.subject_2)])
+      ).toEqual([
+        [1, 10],
+        [2, 20],
+      ]);
+    });
+
     it('두 subject 가 300ms 위상 차로 계속 오면 drop 과 정체 없이 단독이 교대함 (EEG-W005, 대기 1000ms)', () => {
       const groupId = 'grp-solo-phase300';
       timestampAlignerRegistry.getOrCreate(groupId, 200, 1000);
