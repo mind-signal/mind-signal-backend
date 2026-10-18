@@ -488,6 +488,42 @@ describe('csv-upload 자연 종료와 stop-all 경합 (SESSION-W008)', () => {
     expect(tierEvents()).toEqual(['VALID']);
   });
 
+  it.each([
+    ['stop-all', () => stopAll()],
+    ['csv-upload 재업로드', () => upload(1)],
+    ['stream/stop', () => streamStop(1)],
+  ])(
+    'COMPLETED 인데 등급이 null 인 그룹에 %s 재시도가 오면 등급을 저장하고 한 번 알림',
+    async (_name, retry) => {
+      // 전이 저장 뒤 조회 실패나 재시작으로 판정이 돌지 않은 그룹임
+      store.forEach((s) => {
+        s.status = 'COMPLETED';
+        s.stopReason = 'Natural';
+      });
+
+      await retry().expect(200);
+      await settle();
+      expect(store.map((s) => s.analysisTier)).toEqual(['VALID', 'VALID']);
+      expect(tierEvents()).toEqual(['VALID']);
+
+      // 같은 재시도가 두 번 동시에 다시 와도 판정과 알림은 한 번뿐임
+      await Promise.all([retry(), retry()]);
+      await settle();
+      expect(tierEvents()).toEqual(['VALID']);
+      expect(stopMeasurementService).not.toHaveBeenCalled();
+    }
+  );
+
+  it('등급이 null 인 그룹에 재시도가 동시에 와도 판정과 알림은 한 번임', async () => {
+    store.forEach((s) => (s.status = 'COMPLETED'));
+
+    await Promise.all([stopAll(), upload(1), upload(2), streamStop(2)]);
+    await settle();
+
+    expect(store.map((s) => s.analysisTier)).toEqual(['VALID', 'VALID']);
+    expect(tierEvents()).toEqual(['VALID']);
+  });
+
   it('stop-all 은 진행 중인 업로드 전이가 끝난 뒤 재조회해 끝난 subject 에 streamStop 을 보내지 않음', async () => {
     // subject 1 은 이미 자연 종료됨. subject 2 업로드의 전이가 잠금 안에서
     // 진행 중일 때 stop-all 이 들어옴
