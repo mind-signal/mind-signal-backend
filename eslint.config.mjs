@@ -33,6 +33,21 @@ export default [
       
     },
   },
+  // config.ts의 숫자 env는 readNumberEnv로만 읽음. 맨 Number()/parseInt()는
+  // 비정수·NaN·Infinity를 그대로 흘려 실행 중 장애를 냄 (EEG-W008, BE #122 #124)
+  {
+    files: ["src/07-shared/config/config.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CallExpression[callee.name=/^(Number|parseInt|parseFloat)$/] MemberExpression[object.name='process'][property.name='env']",
+          message: "숫자 환경변수는 readNumberEnv로 읽어야 함 (EEG-W008)",
+        },
+      ],
+    },
+  },
   // 3. 마지막에 추가하여 Prettier와 충돌할 수 있는 모든 ESLint 스타일 규칙을 비활성화
   prettierConfig, 
 ];
