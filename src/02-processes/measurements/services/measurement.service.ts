@@ -111,7 +111,7 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
 
   // v7 H-PREP-1: subjectIndex는 1-based
   // 기존 Redis 채널 규칙(`mind-signal:{groupId}:subject:{subjectIndex}`) 그대로 유지
-  for (const subjectIndex of [1, 2]) {
+  for (const subjectIndex of [1, 2] as const) {
     const subscriber = redisService.client.duplicate();
     await subscriber.connect();
     // SESSION-W005 후속: connect 직후에 등록함. subscribe 뒤에 등록하면 구독에

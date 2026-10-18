@@ -85,6 +85,11 @@ describe('[TS-STREAM-01] timestampAlignerRegistry — BE-aligner', () => {
         );
       }).not.toThrow();
     });
+
+    it('ingest 는 subjectIndex 1, 2 만 받음 (타입 시험)', () => {
+      // @ts-expect-error 3 은 subject 번호가 아님
+      timestampAlignerRegistry.ingest('none', 3, makeSample(), 0);
+    });
   });
 
   // ============================================================
