@@ -1,6 +1,6 @@
 {
   "name": "mind-signal-backend",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "main": "dist/01-app/app.js",
   "engines": {
     "node": ">=20.10.0"
