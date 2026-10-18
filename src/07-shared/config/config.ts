@@ -58,6 +58,41 @@ if (messageBusRaw !== 'redis' && messageBusRaw !== 'memory') {
 }
 const messageBus: 'redis' | 'memory' = messageBusRaw;
 
+// 3.7 단독 emit 대기 시간 — 숫자가 아니거나 Infinity면 단독 emit이 영구히 막혀
+// aligner 버퍼가 무한히 쌓이므로 기본값으로 대체하고 경고함 (EEG-W006 리뷰)
+const DEFAULT_SOLO_WAIT_MS = 1000;
+const soloWaitRaw = Number(
+  process.env.DUAL_2PC_SOLO_WAIT_MS ?? DEFAULT_SOLO_WAIT_MS
+);
+if (!Number.isFinite(soloWaitRaw)) {
+  console.warn(
+    `DUAL_2PC_SOLO_WAIT_MS가 유한한 숫자가 아님 (현재: ${process.env.DUAL_2PC_SOLO_WAIT_MS}). ` +
+      `기본값 ${DEFAULT_SOLO_WAIT_MS}ms 사용함`
+  );
+}
+const soloWaitMs = Number.isFinite(soloWaitRaw)
+  ? soloWaitRaw
+  : DEFAULT_SOLO_WAIT_MS;
+
+// 3.8 엔진 한 회 측정의 기대 시간(초)임. 엔진 EXPERIMENT_DURATION_MINUTES 기본
+// 10분과 맞춤. 이보다 일찍 온 엔진 CSV 업로드는 자연 종료가 아니라 오류
+// 종료로 기록함 (SESSION-W008)
+const DEFAULT_MEASUREMENT_EXPECTED_SECONDS = 600;
+const measurementExpectedRaw = Number(
+  process.env.MEASUREMENT_EXPECTED_SECONDS ??
+    DEFAULT_MEASUREMENT_EXPECTED_SECONDS
+);
+const measurementExpectedValid =
+  Number.isFinite(measurementExpectedRaw) && measurementExpectedRaw > 0;
+if (!measurementExpectedValid) {
+  console.warn(
+    `MEASUREMENT_EXPECTED_SECONDS 값이 올바르지 않아 기본값 ${DEFAULT_MEASUREMENT_EXPECTED_SECONDS}초를 사용함 (현재: ${process.env.MEASUREMENT_EXPECTED_SECONDS})`
+  );
+}
+const measurementExpectedSeconds = measurementExpectedValid
+  ? measurementExpectedRaw
+  : DEFAULT_MEASUREMENT_EXPECTED_SECONDS;
+
 // 4. 설정 객체 내보내기
 export const config = {
   env: nodeEnv,
@@ -112,12 +147,19 @@ export const config = {
         .map((s) => s.trim())
         .filter(Boolean)
     : undefined,
+  measurement: {
+    // 자연 종료 판정 기준 기대 측정 시간(초)임
+    expectedSeconds: measurementExpectedSeconds,
+  },
   // Phase 16 DUAL_2PC 타임스탬프 정렬 설정 (optional — 기본값 사용 가능)
   dualPc: {
     // plan-review M-4: 편도 50ms + NTP skew 50ms = 200ms 기본값
     timestampToleranceMs: Number(
       process.env.DUAL_2PC_TIMESTAMP_TOLERANCE_MS ?? 200
     ),
+    // 단독 emit 전 짝 대기 시간. BE 도착 지연이 tolerance 보다 커도 짝을 맞추려고
+    // 분리함 (EEG-W006 8장). 1인 측정 화면 반영이 최대 이만큼 늦어짐
+    soloWaitMs,
     registrationTimeoutMs: Number(
       process.env.DUAL_2PC_REGISTRATION_TIMEOUT_MS ?? 60000
     ),

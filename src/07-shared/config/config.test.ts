@@ -37,4 +37,43 @@ describe('config — Bedrock 설정과 chat-only 가드', () => {
 
     expect(loadConfig).toThrow(/CHAT_ONLY_MODE/);
   });
+
+  it('MEASUREMENT_EXPECTED_SECONDS 미설정이면 600초임 (SESSION-W008)', () => {
+    delete process.env.MEASUREMENT_EXPECTED_SECONDS;
+
+    expect(loadConfig().measurement.expectedSeconds).toBe(600);
+  });
+
+  it('MEASUREMENT_EXPECTED_SECONDS 값을 숫자로 읽음', () => {
+    process.env.MEASUREMENT_EXPECTED_SECONDS = '90';
+
+    expect(loadConfig().measurement.expectedSeconds).toBe(90);
+  });
+
+  it('MEASUREMENT_EXPECTED_SECONDS 가 숫자가 아니면 경고 후 600초로 폴백함', () => {
+    process.env.MEASUREMENT_EXPECTED_SECONDS = 'ten';
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(loadConfig().measurement.expectedSeconds).toBe(600);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it.each(['abc', 'Infinity'])(
+    'DUAL_2PC_SOLO_WAIT_MS=%s면 기본 1000ms로 대체하고 경고함',
+    (raw) => {
+      process.env.DUAL_2PC_SOLO_WAIT_MS = raw;
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(loadConfig().dualPc.soloWaitMs).toBe(1000);
+      expect(warn).toHaveBeenCalledTimes(1);
+      warn.mockRestore();
+    }
+  );
+
+  it('DUAL_2PC_SOLO_WAIT_MS가 유한한 숫자면 그대로 씀', () => {
+    process.env.DUAL_2PC_SOLO_WAIT_MS = '1500';
+
+    expect(loadConfig().dualPc.soloWaitMs).toBe(1500);
+  });
 });

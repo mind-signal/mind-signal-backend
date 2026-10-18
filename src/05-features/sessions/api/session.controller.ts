@@ -116,6 +116,9 @@ export const checkGroupStatus = async (
         guestJoined: s.status === 'PAIRED' || s.status === 'MEASURING',
         userName: user?.name || null,
         isMe: s.userId?._id?.toString() === req.user!.id,
+        // 자연 종료 여부와 등급 판정 결과 확인용임 (SESSION-W008)
+        stopReason: s.stopReason ?? null,
+        analysisTier: s.analysisTier ?? null,
       };
     });
 
