@@ -92,6 +92,18 @@ function gapNs(a: BufferEntry, b: BufferEntry): bigint {
   return d < 0n ? -d : d;
 }
 
+/**
+ * 정렬 키 비교. 항목마다 프록시 시각(ns)이 있으면 그것, 없으면 BE 수신 시각을 ns로
+ * 바꾼 값 하나를 키로 씀. 쌍마다 기준을 바꾸면 섞인 버퍼에서 A<B, B<C, C<A 순환이
+ * 생겨 emitOlderSolo 가 짝 있는 항목을 단독으로 내보냄 (#127 리뷰).
+ * 프록시 재전송으로 BE 도착 순서가 뒤집혀도 원래 순서를 복원함 (EEG-W008)
+ */
+function compareKey(a: BufferEntry, b: BufferEntry): number {
+  const ka = a.ingressNs ?? BigInt(a.ts) * 1_000_000n;
+  const kb = b.ingressNs ?? BigInt(b.ts) * 1_000_000n;
+  return ka < kb ? -1 : ka > kb ? 1 : 0;
+}
+
 /** 항목의 대표 시각(ms). 프록시 수신 시각이 있으면 그것을 씀 */
 function alignMs(e: BufferEntry): number {
   return e.ingressNs !== undefined ? Number(e.ingressNs / 1_000_000n) : e.ts;
@@ -158,10 +170,10 @@ class TimestampAligner {
    * - 매칭 실패 샘플은 soloWaitMs 초과 대기 시 상대를 null 로 두고 단독 emit
    * - 정렬된 쌍은 SocketService.emitToGroup(groupId, 'aligned_pair', alignedSample) 전송
    *
+   * @param now - 대기 판정 기준 시각. Infinity면 남은 미매칭 샘플을 모두 단독 emit함 (정지용)
    * @returns 정렬된 AlignedSample 배열
    */
-  flush(): AlignedSample[] {
-    const now = Date.now();
+  flush(now = Date.now()): AlignedSample[] {
     const toleranceNs = BigInt(this.toleranceMs) * 1_000_000n;
     const aligned: AlignedSample[] = [];
 
@@ -169,8 +181,12 @@ class TimestampAligner {
     // 내보내므로 버퍼가 쌓이지 않음. 이전의 500ms 만료 필터는 이벤트 루프가
     // 잠깐 멈추면 샘플이 tolerance 창을 건너뛰어 조용히 사라지는 구멍이었음
     // (CodeRabbit #106)
-    const fresh1 = this.buffer.get(1) ?? [];
-    const fresh2 = this.buffer.get(2) ?? [];
+    // 정렬 키 순으로 정렬함. 아래 emitOlderSolo 의 "앞 인덱스 = 먼저 찍힌 샘플"
+    // 가정이 BE 도착 순서가 아니라 프록시 시각 순서에서 성립해야 함. 프록시는 앞
+    // 항목 ack 전에 다음 항목을 보내고 publish_failed 항목을 재전송하므로 같은
+    // subject 안에서도 도착 순서가 뒤집힐 수 있음 (EEG-W008 B2)
+    const fresh1 = [...(this.buffer.get(1) ?? [])].sort(compareKey);
+    const fresh2 = [...(this.buffer.get(2) ?? [])].sort(compareKey);
 
     // 그리디 매칭: buf1 각 항목에 대해 toleranceMs 내 buf2 최근접 항목 탐색
     // 매칭 여부를 인덱스로 추적하여 버퍼 업데이트에 활용함
@@ -192,9 +208,9 @@ class TimestampAligner {
       }
 
       if (bestIdx >= 0) {
-        // 짝보다 먼저 받은 같은 subject 미매칭 항목은 이 짝 emit 전에 단독으로
-        // 내보냄. subject별 수신은 FIFO라 그 항목의 짝은 더 오지 않음. 나중에
-        // 단독 emit하면 FE 지표가 옛 값으로 덮임 (EEG-W006 리뷰)
+        // 짝보다 정렬 키가 앞선 같은 subject 미매칭 항목은 이 짝 emit 전에 단독으로
+        // 내보냄. 짝이 이미 더 새 시각에서 맞았으므로 그 항목의 짝은 더 오지 않음.
+        // 나중에 단독 emit하면 FE 지표가 옛 값으로 덮임 (EEG-W006 리뷰)
         this.emitOlderSolo(fresh1, usedIdx1, i1, 1, aligned);
         this.emitOlderSolo(fresh2, usedIdx2, bestIdx, 2, aligned);
         usedIdx1.add(i1);
@@ -272,7 +288,7 @@ class TimestampAligner {
   }
 
   /**
-   * 짝 맞춘 항목(pairedIdx)보다 먼저 받은 미매칭 항목을 단독 emit하고 사용 처리함.
+   * 정렬 키 순 버퍼에서 짝 맞춘 항목(pairedIdx)보다 앞선 미매칭 항목을 단독 emit하고 사용 처리함.
    *
    * @param buf - 이 subject 의 버퍼
    * @param used - 이미 emit 된 인덱스 집합
@@ -384,6 +400,17 @@ export const timestampAlignerRegistry = {
     const aligner = registry.get(groupId);
     if (!aligner) return [];
     return aligner.flush();
+  },
+
+  /**
+   * 정지용 최종 flush. 남은 쌍은 쌍으로, 미매칭 샘플은 대기 시간과 무관하게
+   * 단독으로 emit함. cleanup 전에 호출해야 버퍼가 조용히 버려지지 않음 (EEG-W008)
+   *
+   * @param groupId - 실험 그룹 ID
+   * @returns emit 된 AlignedSample 배열
+   */
+  drain(groupId: string): AlignedSample[] {
+    return registry.get(groupId)?.flush(Number.POSITIVE_INFINITY) ?? [];
   },
 
   /**

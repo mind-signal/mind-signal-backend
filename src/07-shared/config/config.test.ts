@@ -59,7 +59,7 @@ describe('config — Bedrock 설정과 chat-only 가드', () => {
     warn.mockRestore();
   });
 
-  it.each(['abc', 'Infinity'])(
+  it.each(['abc', 'Infinity', '-5'])(
     'DUAL_2PC_SOLO_WAIT_MS=%s면 기본 1000ms로 대체하고 경고함',
     (raw) => {
       process.env.DUAL_2PC_SOLO_WAIT_MS = raw;
@@ -75,5 +75,42 @@ describe('config — Bedrock 설정과 chat-only 가드', () => {
     process.env.DUAL_2PC_SOLO_WAIT_MS = '1500';
 
     expect(loadConfig().dualPc.soloWaitMs).toBe(1500);
+  });
+
+  it('DUAL_2PC_SOLO_WAIT_MS가 허용 오차보다 작으면 aligner와 같게 허용 오차로 올림 (#127 리뷰)', () => {
+    // 정지 경로 유예와 aligner 대기가 어긋나면 마지막 샘플이 drain 뒤에 도착함
+    process.env.DUAL_2PC_SOLO_WAIT_MS = '100';
+    process.env.DUAL_2PC_TIMESTAMP_TOLERANCE_MS = '300';
+
+    expect(loadConfig().dualPc.soloWaitMs).toBe(300);
+  });
+
+  it.each(['150.5', 'abc', 'Infinity', '-5'])(
+    'DUAL_2PC_TIMESTAMP_TOLERANCE_MS=%s면 기본 200ms로 대체하고 경고함 (EEG-W008)',
+    (raw) => {
+      // 비정수가 aligner 의 BigInt 변환까지 가면 setInterval 안에서 RangeError 로
+      // 프로세스가 죽음
+      process.env.DUAL_2PC_TIMESTAMP_TOLERANCE_MS = raw;
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(loadConfig().dualPc.timestampToleranceMs).toBe(200);
+      expect(warn).toHaveBeenCalledTimes(1);
+      warn.mockRestore();
+    }
+  );
+
+  it('DUAL_2PC_TIMESTAMP_TOLERANCE_MS가 양의 정수면 그대로 씀', () => {
+    process.env.DUAL_2PC_TIMESTAMP_TOLERANCE_MS = '150';
+
+    expect(loadConfig().dualPc.timestampToleranceMs).toBe(150);
+  });
+
+  it('DUAL_2PC_REGISTRATION_TIMEOUT_MS가 숫자가 아니면 기본 60000ms로 대체하고 경고함', () => {
+    process.env.DUAL_2PC_REGISTRATION_TIMEOUT_MS = 'abc';
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(loadConfig().dualPc.registrationTimeoutMs).toBe(60000);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });
