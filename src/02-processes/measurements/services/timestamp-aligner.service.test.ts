@@ -85,6 +85,11 @@ describe('[TS-STREAM-01] timestampAlignerRegistry — BE-aligner', () => {
         );
       }).not.toThrow();
     });
+
+    it('ingest 는 subjectIndex 1, 2 만 받음 (타입 시험)', () => {
+      // @ts-expect-error 3 은 subject 번호가 아님
+      timestampAlignerRegistry.ingest('none', 3, makeSample(), 0);
+    });
   });
 
   // ============================================================
@@ -638,6 +643,80 @@ describe('[TS-STREAM-01] timestampAlignerRegistry — BE-aligner', () => {
       expect(emitted.map((e) => [e.subject_1, e.subject_2])).toEqual([
         [a, null],
         [b, b2],
+      ]);
+    });
+
+    it('재전송으로 같은 subject 수신 순서가 뒤집혀도 새 샘플이 단독으로 먼저 나가지 않고 짝을 맞춤 (EEG-W008)', () => {
+      // 프록시는 앞 항목 ack 를 기다리지 않고 다음 항목을 보내며, publish_failed
+      // 항목은 재전송함. 그래서 subject 2 의 A2 가 B2 보다 늦게 BE 에 도착할 수 있음
+      const groupId = 'grp-reorder';
+      timestampAlignerRegistry.getOrCreate(groupId, 200, 1000);
+      const t0 = clock;
+      const emitted = [];
+
+      timestampAlignerRegistry.ingest(groupId, 1, makeSample(1), t0, ns(1000));
+      timestampAlignerRegistry.ingest(groupId, 2, makeSample(20), t0, ns(2000));
+      timestampAlignerRegistry.ingest(
+        groupId,
+        2,
+        makeSample(10),
+        t0 + 60,
+        ns(1000)
+      );
+      clock = t0 + 100;
+      emitted.push(...timestampAlignerRegistry.flush(groupId));
+      // B1 은 soloWaitMs(1000) 안에 도착함
+      timestampAlignerRegistry.ingest(
+        groupId,
+        1,
+        makeSample(2),
+        t0 + 300,
+        ns(2000)
+      );
+      clock = t0 + 400;
+      emitted.push(...timestampAlignerRegistry.flush(groupId));
+
+      // subject 별 delta 값으로 비교함 (a1=1, a2=10, b1=2, b2=20)
+      const delta = (x: SubjectSample | null) => x?.waves.delta ?? null;
+      expect(
+        emitted.map((e) => [delta(e.subject_1), delta(e.subject_2)])
+      ).toEqual([
+        [1, 10],
+        [2, 20],
+      ]);
+    });
+
+    it('같은 subject 에 프록시 시각이 있는 항목과 없는 항목이 섞여도 정렬이 순환하지 않아 짝을 잃지 않음 (#127 리뷰)', () => {
+      // 단위가 섞인 비교는 A<B, B<C, C<A 순환을 만들어 C 가 단독으로 먼저 나갈 수 있음
+      const groupId = 'grp-mixed-order';
+      timestampAlignerRegistry.getOrCreate(groupId, 4, 1000);
+      const t0 = clock;
+      const at = (offsetMs: number): string =>
+        ((BigInt(t0) + BigInt(offsetMs)) * 1_000_000n).toString();
+      // A: 프록시 0ms, BE 40ms / B: 프록시 20ms, BE 25ms / C: 프록시 없음, BE 30ms
+      const a = [makeSample(1), t0 + 40, at(0)] as const;
+      const b = [makeSample(2), t0 + 25, at(20)] as const;
+      const c = [makeSample(3), t0 + 30] as const;
+
+      // subject 1 은 A, B, C 순, subject 2 는 B, C, A 순으로 도착함
+      timestampAlignerRegistry.ingest(groupId, 1, ...a);
+      timestampAlignerRegistry.ingest(groupId, 1, ...b);
+      timestampAlignerRegistry.ingest(groupId, 1, ...c);
+      timestampAlignerRegistry.ingest(groupId, 2, ...b);
+      timestampAlignerRegistry.ingest(groupId, 2, ...c);
+      timestampAlignerRegistry.ingest(groupId, 2, ...a);
+      clock = t0 + 100;
+
+      const emitted = timestampAlignerRegistry.flush(groupId);
+      const delta = (x: SubjectSample | null) => x?.waves.delta ?? null;
+      expect(
+        emitted
+          .map((e) => [delta(e.subject_1), delta(e.subject_2)])
+          .sort((x, y) => (x[0] ?? 0) - (y[0] ?? 0))
+      ).toEqual([
+        [1, 1],
+        [2, 2],
+        [3, 3],
       ]);
     });
 

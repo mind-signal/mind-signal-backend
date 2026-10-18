@@ -58,10 +58,16 @@ const MIN_ANALYSIS_SECONDS = 180;
 async function triggerPostMeasurementByTier(groupId: string) {
   const { Session: SessionModel } = await import('@06-entities/sessions');
 
-  const completedSessions = await SessionModel.find({
-    groupId,
-    status: 'COMPLETED',
-  });
+  // 모든 종료 경로가 매번 부르므로 그룹이 다 끝났고 아직 판정 전일 때만 진행함.
+  // 마지막 전이 뒤 조회 실패나 재시작으로 판정을 놓친 그룹도 재시도로 판정됨
+  const completedSessions = await SessionModel.find({ groupId });
+  if (
+    completedSessions.length === 0 ||
+    completedSessions.some((s) => s.status !== 'COMPLETED') ||
+    completedSessions.every((s) => s.analysisTier !== null)
+  ) {
+    return;
+  }
 
   // 프로세스 생존 시간뿐 아니라 실제 수집량(coverage)까지 확인함.
   // 스트림이 중간에 죽어도 프로세스가 살아 있으면 duration만으로는 통과하기 때문임.
@@ -108,6 +114,23 @@ async function triggerPostMeasurementByTier(groupId: string) {
   console.log(
     `[postMeasurement] groupId=${groupId} tier=${tier} (valid=${validSessions.length}/${completedSessions.length})`
   );
+
+  // 비-DUAL_2PC 분석은 legacy 엔진 slot 을 씀. 백엔드 재시작 뒤 엔진 heartbeat
+  // 재등록 전에 판정하면 파이프라인이 503 으로 실패하고 ABORTED 로 덮여
+  // 재시도가 끊김. 등급을 저장하지 않고 끝내 재등록 뒤 종료 재시도가 판정하게 함
+  if (
+    tier !== 'ABORTED' &&
+    completedSessions[0].experimentMode !== 'DUAL_2PC'
+  ) {
+    try {
+      engineRegistryService.getEngineUrl();
+    } catch {
+      console.warn(
+        `[postMeasurement] groupId=${groupId} legacy 엔진 미등록, 판정 보류`
+      );
+      return;
+    }
+  }
 
   // 등급을 두 세션에 저장함. 이미 판정된 그룹이면 0건이라 여기서 끝냄 —
   // 판정과 emit 이 그룹당 한 번만 일어나게 하는 가드임
@@ -226,19 +249,18 @@ type StopReason = 'Natural' | 'ManualEarly' | 'HeadsetLost' | 'ProcessError';
  * 구독자 레지스트리로 확인함. 엔진은 오류 종료(on_inform_error, SIGTERM 등)
  * 에도 CSV 를 올리므로 기대 측정 시간을 못 채운 업로드는 ProcessError 로 남김.
  *
- * @returns 전이 여부와 그룹의 마지막 전이 여부 반환
+ * @returns 전이 여부 반환
  */
 function completeFromUpload(
   groupId: string,
   subjectIndex: number
-): Promise<{ completed: boolean; allCompleted: boolean; note?: string }> {
+): Promise<{ completed: boolean; note?: string }> {
   return withGroupLock(groupId, async () => {
     const { Session: SessionModel } = await import('@06-entities/sessions');
     const session = await SessionModel.findOne({ groupId, subjectIndex });
     if (session?.status !== 'MEASURING') {
       return {
         completed: false,
-        allCompleted: false,
         note: `세션 상태 ${session?.status ?? '없음'}`,
       };
     }
@@ -249,7 +271,6 @@ function completeFromUpload(
     if (!owned) {
       return {
         completed: false,
-        allCompleted: false,
         note: '이 백엔드가 진행 중인 측정 아님',
       };
     }
@@ -261,12 +282,8 @@ function completeFromUpload(
       config.measurement.expectedSeconds - NATURAL_END_TOLERANCE_SECONDS
         ? 'Natural'
         : 'ProcessError';
-    const { allCompleted } = await stopMeasurementService(
-      groupId,
-      subjectIndex,
-      stopReason
-    );
-    return { completed: true, allCompleted };
+    await stopMeasurementService(groupId, subjectIndex, stopReason);
+    return { completed: true };
   });
 }
 
@@ -277,10 +294,14 @@ async function isGroupCompleted(groupId: string): Promise<boolean> {
   return sessions.length > 0 && sessions.every((x) => x.status === 'COMPLETED');
 }
 
-/** 그룹 등급 판정을 비동기로 시작함 */
+/**
+ * 그룹 등급 판정을 비동기로 시작함. 그룹이 다 끝났고 판정 전일 때만 실제로
+ * 판정하므로 종료 경로마다 조건 없이 부름. 그룹 잠금으로 동시 호출을 직렬화해
+ * 등급 저장과 알림이 그룹당 한 번만 일어나게 함
+ */
 function startTierJudgement(groupId: string): void {
-  triggerPostMeasurementByTier(groupId).catch((err) =>
-    console.error('3-tier 파이프라인 트리거 에러:', err)
+  withGroupLock(groupId, () => triggerPostMeasurementByTier(groupId)).catch(
+    (err) => console.error('3-tier 파이프라인 트리거 에러:', err)
   );
 }
 
@@ -341,7 +362,8 @@ export const engineController = {
               `[csvUpload] groupId=${groupId} subject=${subjectIndex} 종료 처리 생략: ${result.note}`
             );
           }
-          if (result.allCompleted) startTierJudgement(groupId);
+          // 이미 끝난 세션의 재업로드도 판정 누락을 복구하도록 항상 부름
+          startTierJudgement(groupId);
         } catch (err) {
           console.warn(
             `[csvUpload] groupId=${groupId} subject=${subjectIndex} 종료 처리 실패: ${
@@ -417,37 +439,42 @@ export const engineController = {
         // 그룹은 정리(cleanupGroup)로 엔진 등록이 지워져 streamStop 이 legacy
         // URL 로 폴백하므로 엔진 요청 없이 끝냄. 이 subject 는 수동 중지로
         // 표시돼 있어 엔진이 올리는 CSV 는 잠금을 기다리지 않으므로 교착이 없음
-        const { engineResult, finishedGroup } = await withGroupLock(
-          groupId,
-          async () => {
-            const { Session: SessionModel } =
-              await import('@06-entities/sessions');
-            const session = await SessionModel.findOne({
-              groupId,
-              subjectIndex,
-            });
-            if (session?.status === 'COMPLETED') {
-              return {
-                engineResult: { status: 'success' },
-                finishedGroup: false,
-              };
-            }
-
-            const result = await engineProxyService.streamStop(
-              groupId,
-              subjectIndex
-            );
-            const { allCompleted } = await stopMeasurementService(
-              groupId,
-              subjectIndex,
-              stopReason ?? 'Natural'
-            );
-            return { engineResult: result, finishedGroup: allCompleted };
+        const engineResult = await withGroupLock(groupId, async () => {
+          const { Session: SessionModel } =
+            await import('@06-entities/sessions');
+          const session = await SessionModel.findOne({
+            groupId,
+            subjectIndex,
+          });
+          if (session?.status === 'COMPLETED') {
+            return { status: 'success' };
           }
-        );
+          // 종료할 수 없는 상태는 엔진 요청 전에 거절함. 먼저 보내면 엔진의
+          // 404나 503이 상태 오류(400)를 가림. 문구는 stopMeasurementService 와 같음
+          if (!session) {
+            throw new AppError('세션을 찾을 수 없습니다.', 404);
+          }
+          if (!session.canTransitionTo('COMPLETED')) {
+            throw new AppError(
+              `현재 ${session.status} 상태에서는 측정을 완료할 수 없습니다.`,
+              400
+            );
+          }
 
-        // 3. 이번 호출이 마지막 전이를 했을 때만 3-tier 판정 트리거함
-        if (finishedGroup) startTierJudgement(groupId);
+          const result = await engineProxyService.streamStop(
+            groupId,
+            subjectIndex
+          );
+          await stopMeasurementService(
+            groupId,
+            subjectIndex,
+            stopReason ?? 'Natural'
+          );
+          return result;
+        });
+
+        // 3. 판정 누락 복구를 위해 이미 끝난 subject 의 재시도에도 부름
+        startTierJudgement(groupId);
 
         // 응답은 자연 종료로 먼저 끝난 subject 까지 포함해 다시 계산함
         const allCompleted = await isGroupCompleted(groupId);
@@ -545,6 +572,8 @@ export const engineController = {
       if (measuringSessions.length === 0) {
         // 엔진 자연 종료가 먼저 두 세션을 끝냈으면 중지할 것이 없을 뿐임
         if (await isGroupCompleted(groupId)) {
+          // 판정을 놓친 그룹이면 이 재시도로 판정함
+          startTierJudgement(groupId);
           res
             .status(200)
             .json({ status: 'success', stoppedCount: 0, allCompleted: true });
@@ -557,7 +586,6 @@ export const engineController = {
         .map((x) => x.subjectIndex)
         .filter((i): i is number => i !== null);
       const releaseManualStop = holdManualStop(groupId, subjectIndices);
-      let finishedGroup = false;
       try {
         // 각 subject를 순차적으로 종료함
         for (const subjectIndex of subjectIndices) {
@@ -566,9 +594,9 @@ export const engineController = {
           // streamStop 이 legacy URL 로 폴백함. 이 subject 들은 수동 중지로
           // 표시돼 있어 엔진이 stop 처리 중 올리는 CSV 는 잠금을 기다리지
           // 않으므로 교착이 없음
-          const result = await withGroupLock(groupId, async () => {
+          await withGroupLock(groupId, async () => {
             const fresh = await SessionModel.findOne({ groupId, subjectIndex });
-            if (fresh?.status === 'COMPLETED') return { allCompleted: false };
+            if (fresh?.status === 'COMPLETED') return;
 
             try {
               await engineProxyService.streamStop(groupId, subjectIndex);
@@ -579,20 +607,19 @@ export const engineController = {
               );
             }
 
-            return stopMeasurementService(
+            await stopMeasurementService(
               groupId,
               subjectIndex,
               stopReason ?? 'ManualEarly'
             );
           });
-          finishedGroup ||= result.allCompleted;
         }
       } finally {
         releaseManualStop();
       }
 
-      // 이번 호출이 마지막 전이를 했을 때만 3-tier 판정 트리거함
-      if (finishedGroup) startTierJudgement(groupId);
+      // 그룹이 다 끝났으면 판정함. 판정 함수가 완료와 미판정을 직접 확인함
+      startTierJudgement(groupId);
 
       // 응답은 순서 무관하게 전체 완료 여부를 독립 확인함
       const allCompleted = await isGroupCompleted(groupId);

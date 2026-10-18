@@ -44,7 +44,12 @@ jest.mock('@07-shared/config/config', () => ({
       pythonBin: 'python',
       secretKey: 'correct-engine-secret',
     },
-    dualPc: { timestampToleranceMs: 200, registrationTimeoutMs: 60000 },
+    // soloWaitMs 는 정지 유예 시간이기도 함. 테스트 시간을 줄이려고 100ms 로 둠
+    dualPc: {
+      timestampToleranceMs: 200,
+      soloWaitMs: 100,
+      registrationTimeoutMs: 60000,
+    },
     measurement: { expectedSeconds: 600 },
   },
 }));
@@ -88,17 +93,7 @@ jest.mock('@07-shared/lib/redis', () => ({
   redisService: { client: { duplicate: jest.fn() } },
 }));
 
-jest.mock(
-  '@02-processes/measurements/services/timestamp-aligner.service',
-  () => ({
-    timestampAlignerRegistry: {
-      getOrCreate: jest.fn(),
-      ingest: jest.fn(),
-      flush: jest.fn(),
-      cleanup: jest.fn(),
-    },
-  })
-);
+// aligner 는 실제 구현을 씀. 정지 시 남은 샘플 flush 를 이 경로로 검증함 (EEG-W008)
 
 jest.mock(
   '@02-processes/measurements/services/stimulus-broadcaster.service',
@@ -131,7 +126,9 @@ jest.mock('@05-features/sessions', () => ({
 }));
 
 import { SocketService } from '@07-shared/lib/socket';
+import { Session } from '@06-entities/sessions';
 import { engineRegistryService } from '../services/engine-registry.service';
+import { timestampAlignerRegistry } from '@02-processes/measurements/services/timestamp-aligner.service';
 import engineRouter from './engine.routes';
 
 const app = express();
@@ -187,6 +184,7 @@ describe('csv-upload 자연 종료 — 실제 stopMeasurementService 경유 (SES
 
   beforeEach(() => {
     jest.clearAllMocks();
+    timestampAlignerRegistry.__resetForTest__();
     store.length = 0;
     store.push(makeSession(1), makeSession(2));
     for (const subjectIndex of [1, 2]) {
@@ -222,5 +220,111 @@ describe('csv-upload 자연 종료 — 실제 stopMeasurementService 경유 (SES
     // 그룹 종료 정리로 엔진 등록이 지워짐
     expect(engineRegistryService.getByGroup(GROUP_ID)).toBeUndefined();
     expect(store.map((s) => s.analysisTier)).toEqual(['VALID', 'VALID']);
+  });
+
+  it('정지 시 aligner 에 남은 쌍과 미매칭 샘플을 measurement-complete 전에 내보냄 (EEG-W008)', async () => {
+    // 100ms flush 주기 사이에 마지막 샘플이 들어온 채 정지가 오는 상황임
+    const ns = (ms: number) => String(BigInt(ms) * 1_000_000n);
+    const sample = (v: number) => ({
+      waves: { delta: v, theta: v, alpha: v, beta: v, gamma: v },
+    });
+    timestampAlignerRegistry.getOrCreate(GROUP_ID, 200, 1000);
+    const now = Date.now();
+    timestampAlignerRegistry.ingest(GROUP_ID, 1, sample(1), now, ns(1000));
+    timestampAlignerRegistry.ingest(GROUP_ID, 2, sample(10), now, ns(1010));
+    timestampAlignerRegistry.ingest(GROUP_ID, 1, sample(2), now, ns(5000));
+
+    await upload(1).expect(200);
+    await upload(2).expect(200);
+    await new Promise((r) => setTimeout(r, 30));
+
+    const calls = jest.mocked(SocketService.emitToGroup).mock.calls;
+    const order = calls
+      .map(([, event]) => event)
+      .filter((e) => e === 'aligned_pair' || e === 'measurement-complete');
+    expect(order).toEqual([
+      'aligned_pair',
+      'aligned_pair',
+      'measurement-complete',
+    ]);
+    const pairs = events('aligned_pair').map(([, , p]) => {
+      const a = p as {
+        subject_1: { waves: { delta: number } } | null;
+        subject_2: { waves: { delta: number } } | null;
+      };
+      return [
+        a.subject_1?.waves.delta ?? null,
+        a.subject_2?.waves.delta ?? null,
+      ];
+    });
+    expect(pairs).toEqual([
+      [1, 10],
+      [2, null],
+    ]);
+    // 정지 뒤 aligner 는 제거되어 다시 flush 해도 아무것도 나가지 않음
+    expect(timestampAlignerRegistry.flush(GROUP_ID)).toEqual([]);
+  });
+
+  it('정지 처리 시작 뒤 유예 안에 도착한 마지막 샘플도 measurement-complete 전에 짝을 맞춰 나감 (EEG-W008)', async () => {
+    // 하네스 redis 버스, subject 2 지연 300ms: 엔진 2 의 CSV 업로드가 중계기에
+    // 걸린 마지막 샘플보다 먼저 와서, 그 샘플이 drain 뒤 publish 되어 사라졌음
+    const ns = (ms: number) => String(BigInt(ms) * 1_000_000n);
+    const sample = (v: number) => ({
+      waves: { delta: v, theta: v, alpha: v, beta: v, gamma: v },
+    });
+    timestampAlignerRegistry.getOrCreate(GROUP_ID, 200, 100);
+    timestampAlignerRegistry.ingest(
+      GROUP_ID,
+      1,
+      sample(1),
+      Date.now(),
+      ns(1000)
+    );
+
+    // 두 세션이 모두 COMPLETED 로 보인 직후(allCompleted 판정 시점)에서 20ms 뒤
+    // subject 2 의 마지막 샘플이 도착하게 함
+    // 위 jest.mock 의 메모리 구현을 감쌈. mongoose Query 타입이 아니라 Promise 를
+    // 돌려주는 가짜라 jest.Mock 으로 다룸
+    const findMock = Session.find as unknown as jest.Mock;
+    const findImpl = findMock.getMockImplementation()!;
+    let scheduled = false;
+    findMock.mockImplementation(async (q: { groupId: string }) => {
+      const result = await findImpl(q);
+      if (!scheduled && store.every((x) => x.status === 'COMPLETED')) {
+        scheduled = true;
+        setTimeout(() => {
+          timestampAlignerRegistry.ingest(
+            GROUP_ID,
+            2,
+            sample(10),
+            Date.now(),
+            ns(1010)
+          );
+        }, 20);
+      }
+      return result;
+    });
+
+    await upload(1).expect(200);
+    await upload(2).expect(200);
+    await new Promise((r) => setTimeout(r, 30));
+    findMock.mockImplementation(findImpl);
+
+    const order = jest
+      .mocked(SocketService.emitToGroup)
+      .mock.calls.map(([, event, p]) => {
+        if (event !== 'aligned_pair') return event;
+        const a = p as {
+          subject_1: { waves: { delta: number } } | null;
+          subject_2: { waves: { delta: number } } | null;
+        };
+        return [
+          a.subject_1?.waves.delta ?? null,
+          a.subject_2?.waves.delta ?? null,
+        ];
+      })
+      .filter((e) => Array.isArray(e) || e === 'measurement-complete');
+    expect(scheduled).toBe(true);
+    expect(order).toEqual([[1, 10], 'measurement-complete']);
   });
 });

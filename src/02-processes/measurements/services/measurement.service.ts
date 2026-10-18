@@ -111,7 +111,7 @@ async function subscribeWithAligner(groupId: string): Promise<void> {
 
   // v7 H-PREP-1: subjectIndex는 1-based
   // 기존 Redis 채널 규칙(`mind-signal:{groupId}:subject:{subjectIndex}`) 그대로 유지
-  for (const subjectIndex of [1, 2]) {
+  for (const subjectIndex of [1, 2] as const) {
     const subscriber = redisService.client.duplicate();
     await subscriber.connect();
     // SESSION-W005 후속: connect 직후에 등록함. subscribe 뒤에 등록하면 구독에
@@ -416,7 +416,11 @@ function startDualMeasurement(groupId: string): void {
       // 등록된 subject만 대상으로 함 — dualRegistry에 그룹이 없으면
       // streamStop이 legacy 단일 슬롯 URL로 폴백해(engine-proxy.service.ts:194-199)
       // 무관한 1PC 측정에 종료 요청이 나감. getEngineUrl은 슬롯이 비었을 때만
-      // 503을 던지므로(engine-registry.service.ts:49-53) 차 있으면 실제로 나감
+      // 503을 던지므로(engine-registry.service.ts:49-53) 차 있으면 실제로 나감.
+      // 다만 실제 엔진 stop_stream은 `group_id:subject_index` 키가 없으면
+      // 404로 끝나 다른 그룹 측정을 멈추지 않음(mind-signal-data-engine
+      // server/services/stream.py:110-115). group_id를 무시하는
+      // scripts/mock_data_engine.py가 legacy 슬롯에 있을 때만 실제로 멈춤
       const registrations = engineRegistryService.getByGroup(groupId);
       if (registrations) {
         const { engineProxyService: proxyForStop } =
@@ -680,18 +684,33 @@ export const stopMeasurementService = async (
   // 비-DUAL_2PC legacy 경로(BTI)는 subject별 emit 유지 (v2 N-3 반영)
   if (session.experimentMode === 'DUAL_2PC') {
     if (allCompleted) {
+      // 엔진의 정지 통보(CSV 업로드, stream/stop)가 프록시·Redis를 거쳐 오는 마지막
+      // 샘플보다 먼저 올 수 있음. 짝 대기 한도(soloWaitMs)만큼 구독과 flush를
+      // 유지해 늦은 샘플을 받음. 하네스 redis 버스(subject 2 지연 300ms)에서 마지막
+      // 샘플이 drain 뒤 publish되어 사라졌음 (EEG-W008). 호출자는 모두
+      // withGroupLock 안이라 같은 그룹의 정지가 유예 중 겹치지 않고, COMPLETED는
+      // 종단 상태라 같은 그룹 재시작도 없음. 다른 그룹 시작이 유예 중 이 그룹을
+      // 정리하면 아래 해제와 drain은 빈 동작이 됨
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, config.dualPc.soloWaitMs)
+      );
+      // subscribeWithAligner가 생성한 Redis subscriber 2개 + flush interval 전부 해제.
+      // 최종 flush 전에 먼저 끊어 interval flush와 겹치지 않고, 해제 중 도착한
+      // 샘플도 aligner에 남아 최종 flush에 포함됨 (EEG-W008)
+      await unsubscribeGroupChannels(session.groupId);
+      // 짝을 기다리던 샘플을 버리지 않고 내보낸 뒤 제거함. FE는
+      // measurement-complete 수신 시 aligned_pair 리스너를 떼므로 그 전에 emit함
+      timestampAlignerRegistry.drain(session.groupId);
+      timestampAlignerRegistry.cleanup(session.groupId);
       // 두 subject 모두 COMPLETED일 때만 1회 emit
       SocketService.emitToGroup(session.groupId, 'measurement-complete', {
         ...payload,
         sessionId: session._id,
       });
-      timestampAlignerRegistry.cleanup(session.groupId);
       engineRegistryService.cleanupGroup(session.groupId);
       // registry-status 캐시(ready=true)는 GC 30분까지 남아, 종료된 그룹을
       // 새로고침으로 복원한 운영자 화면에 `실험 시작`이 다시 뜸 (2026-09-07)
       dualTriggerService.resetStatus(session.groupId);
-      // subscribeWithAligner가 생성한 Redis subscriber 2개 + flush interval 전부 해제
-      await unsubscribeGroupChannels(session.groupId);
     }
     // 첫 subject stop 시점에는 emit 생략 (UI는 "partner 측정 중" 상태 유지)
   } else {
