@@ -680,6 +680,16 @@ export const stopMeasurementService = async (
   // 비-DUAL_2PC legacy 경로(BTI)는 subject별 emit 유지 (v2 N-3 반영)
   if (session.experimentMode === 'DUAL_2PC') {
     if (allCompleted) {
+      // 엔진의 정지 통보(CSV 업로드, stream/stop)가 프록시·Redis를 거쳐 오는 마지막
+      // 샘플보다 먼저 올 수 있음. 짝 대기 한도(soloWaitMs)만큼 구독과 flush를
+      // 유지해 늦은 샘플을 받음. 하네스 redis 버스(subject 2 지연 300ms)에서 마지막
+      // 샘플이 drain 뒤 publish되어 사라졌음 (EEG-W008). 호출자는 모두
+      // withGroupLock 안이라 같은 그룹의 정지가 유예 중 겹치지 않고, COMPLETED는
+      // 종단 상태라 같은 그룹 재시작도 없음. 다른 그룹 시작이 유예 중 이 그룹을
+      // 정리하면 아래 해제와 drain은 빈 동작이 됨
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, config.dualPc.soloWaitMs)
+      );
       // subscribeWithAligner가 생성한 Redis subscriber 2개 + flush interval 전부 해제.
       // 최종 flush 전에 먼저 끊어 interval flush와 겹치지 않고, 해제 중 도착한
       // 샘플도 aligner에 남아 최종 flush에 포함됨 (EEG-W008)
