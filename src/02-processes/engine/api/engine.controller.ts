@@ -115,6 +115,23 @@ async function triggerPostMeasurementByTier(groupId: string) {
     `[postMeasurement] groupId=${groupId} tier=${tier} (valid=${validSessions.length}/${completedSessions.length})`
   );
 
+  // 비-DUAL_2PC 분석은 legacy 엔진 slot 을 씀. 백엔드 재시작 뒤 엔진 heartbeat
+  // 재등록 전에 판정하면 파이프라인이 503 으로 실패하고 ABORTED 로 덮여
+  // 재시도가 끊김. 등급을 저장하지 않고 끝내 재등록 뒤 종료 재시도가 판정하게 함
+  if (
+    tier !== 'ABORTED' &&
+    completedSessions[0].experimentMode !== 'DUAL_2PC'
+  ) {
+    try {
+      engineRegistryService.getEngineUrl();
+    } catch {
+      console.warn(
+        `[postMeasurement] groupId=${groupId} legacy 엔진 미등록, 판정 보류`
+      );
+      return;
+    }
+  }
+
   // 등급을 두 세션에 저장함. 이미 판정된 그룹이면 0건이라 여기서 끝냄 —
   // 판정과 emit 이 그룹당 한 번만 일어나게 하는 가드임
   // COMPLETED 조건은 측정 시작 실패 정리로 CANCELLED 가 된 그룹을 거름

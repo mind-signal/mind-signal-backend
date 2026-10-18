@@ -514,6 +514,42 @@ describe('csv-upload 자연 종료와 stop-all 경합 (SESSION-W008)', () => {
     }
   );
 
+  it.each([
+    ['VALID', true],
+    ['PARTIAL', false],
+  ])(
+    'legacy 엔진 미등록이면 비-DUAL_2PC 그룹의 %s 판정을 미루고 재등록 뒤 재시도에서 판정함',
+    async (tier, subject2Valid) => {
+      // 백엔드 재시작 뒤 엔진 heartbeat 재등록 전이라 legacy slot 이 빔
+      const legacyUrl = jest
+        .spyOn(engineRegistryService, 'getEngineUrl')
+        .mockImplementation(() => {
+          throw new Error('파이썬 데이터 엔진이 아직 등록되지 않았습니다.');
+        });
+      validBySubject[2] = subject2Valid;
+      engineRegistryService.cleanupGroup(GROUP_ID);
+      store.forEach((s) => {
+        s.status = 'COMPLETED';
+        s.stopReason = 'Natural';
+        s.experimentMode = 'BTI';
+      });
+
+      await stopAll().expect(200);
+      await settle();
+      // 등급을 소비하지 않아야 파이프라인 503 이 ABORTED 로 덮지 않음
+      expect(store.map((s) => s.analysisTier)).toEqual([null, null]);
+      expect(tierEvents()).toEqual([]);
+
+      // 엔진이 재등록한 뒤의 재시도는 정상 판정함
+      legacyUrl.mockReturnValue('http://legacy-engine');
+      await stopAll().expect(200);
+      await settle();
+      legacyUrl.mockRestore();
+      expect(store.map((s) => s.analysisTier)).toEqual([tier, tier]);
+      expect(tierEvents()).toEqual([tier]);
+    }
+  );
+
   it('등급이 null 인 그룹에 재시도가 동시에 와도 판정과 알림은 한 번임', async () => {
     store.forEach((s) => (s.status = 'COMPLETED'));
 
