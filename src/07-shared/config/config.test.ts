@@ -59,7 +59,7 @@ describe('config — Bedrock 설정과 chat-only 가드', () => {
     warn.mockRestore();
   });
 
-  it.each(['abc', 'Infinity'])(
+  it.each(['abc', 'Infinity', '-5'])(
     'DUAL_2PC_SOLO_WAIT_MS=%s면 기본 1000ms로 대체하고 경고함',
     (raw) => {
       process.env.DUAL_2PC_SOLO_WAIT_MS = raw;
@@ -75,6 +75,14 @@ describe('config — Bedrock 설정과 chat-only 가드', () => {
     process.env.DUAL_2PC_SOLO_WAIT_MS = '1500';
 
     expect(loadConfig().dualPc.soloWaitMs).toBe(1500);
+  });
+
+  it('DUAL_2PC_SOLO_WAIT_MS가 허용 오차보다 작으면 aligner와 같게 허용 오차로 올림 (#127 리뷰)', () => {
+    // 정지 경로 유예와 aligner 대기가 어긋나면 마지막 샘플이 drain 뒤에 도착함
+    process.env.DUAL_2PC_SOLO_WAIT_MS = '100';
+    process.env.DUAL_2PC_TIMESTAMP_TOLERANCE_MS = '300';
+
+    expect(loadConfig().dualPc.soloWaitMs).toBe(300);
   });
 
   it.each(['150.5', 'abc', 'Infinity', '-5'])(

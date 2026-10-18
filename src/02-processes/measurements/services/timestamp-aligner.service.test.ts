@@ -681,6 +681,40 @@ describe('[TS-STREAM-01] timestampAlignerRegistry — BE-aligner', () => {
       ]);
     });
 
+    it('같은 subject 에 프록시 시각이 있는 항목과 없는 항목이 섞여도 정렬이 순환하지 않아 짝을 잃지 않음 (#127 리뷰)', () => {
+      // 단위가 섞인 비교는 A<B, B<C, C<A 순환을 만들어 C 가 단독으로 먼저 나갈 수 있음
+      const groupId = 'grp-mixed-order';
+      timestampAlignerRegistry.getOrCreate(groupId, 4, 1000);
+      const t0 = clock;
+      const at = (offsetMs: number): string =>
+        ((BigInt(t0) + BigInt(offsetMs)) * 1_000_000n).toString();
+      // A: 프록시 0ms, BE 40ms / B: 프록시 20ms, BE 25ms / C: 프록시 없음, BE 30ms
+      const a = [makeSample(1), t0 + 40, at(0)] as const;
+      const b = [makeSample(2), t0 + 25, at(20)] as const;
+      const c = [makeSample(3), t0 + 30] as const;
+
+      // subject 1 은 A, B, C 순, subject 2 는 B, C, A 순으로 도착함
+      timestampAlignerRegistry.ingest(groupId, 1, ...a);
+      timestampAlignerRegistry.ingest(groupId, 1, ...b);
+      timestampAlignerRegistry.ingest(groupId, 1, ...c);
+      timestampAlignerRegistry.ingest(groupId, 2, ...b);
+      timestampAlignerRegistry.ingest(groupId, 2, ...c);
+      timestampAlignerRegistry.ingest(groupId, 2, ...a);
+      clock = t0 + 100;
+
+      const emitted = timestampAlignerRegistry.flush(groupId);
+      const delta = (x: SubjectSample | null) => x?.waves.delta ?? null;
+      expect(
+        emitted
+          .map((e) => [delta(e.subject_1), delta(e.subject_2)])
+          .sort((x, y) => (x[0] ?? 0) - (y[0] ?? 0))
+      ).toEqual([
+        [1, 1],
+        [2, 2],
+        [3, 3],
+      ]);
+    });
+
     it('두 subject 가 300ms 위상 차로 계속 오면 drop 과 정체 없이 단독이 교대함 (EEG-W005, 대기 1000ms)', () => {
       const groupId = 'grp-solo-phase300';
       timestampAlignerRegistry.getOrCreate(groupId, 200, 1000);

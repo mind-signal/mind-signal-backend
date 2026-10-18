@@ -93,14 +93,15 @@ function gapNs(a: BufferEntry, b: BufferEntry): bigint {
 }
 
 /**
- * 정렬 키 비교. gapNs 와 같은 기준(둘 다 프록시 시각이 있으면 그것, 아니면 BE 수신 시각)임.
+ * 정렬 키 비교. 항목마다 프록시 시각(ns)이 있으면 그것, 없으면 BE 수신 시각을 ns로
+ * 바꾼 값 하나를 키로 씀. 쌍마다 기준을 바꾸면 섞인 버퍼에서 A<B, B<C, C<A 순환이
+ * 생겨 emitOlderSolo 가 짝 있는 항목을 단독으로 내보냄 (#127 리뷰).
  * 프록시 재전송으로 BE 도착 순서가 뒤집혀도 원래 순서를 복원함 (EEG-W008)
  */
 function compareKey(a: BufferEntry, b: BufferEntry): number {
-  if (a.ingressNs !== undefined && b.ingressNs !== undefined) {
-    return a.ingressNs < b.ingressNs ? -1 : a.ingressNs > b.ingressNs ? 1 : 0;
-  }
-  return a.ts - b.ts;
+  const ka = a.ingressNs ?? BigInt(a.ts) * 1_000_000n;
+  const kb = b.ingressNs ?? BigInt(b.ts) * 1_000_000n;
+  return ka < kb ? -1 : ka > kb ? 1 : 0;
 }
 
 /** 항목의 대표 시각(ms). 프록시 수신 시각이 있으면 그것을 씀 */
