@@ -488,6 +488,78 @@ describe('csv-upload 자연 종료와 stop-all 경합 (SESSION-W008)', () => {
     expect(tierEvents()).toEqual(['VALID']);
   });
 
+  it.each([
+    ['stop-all', () => stopAll()],
+    ['csv-upload 재업로드', () => upload(1)],
+    ['stream/stop', () => streamStop(1)],
+  ])(
+    'COMPLETED 인데 등급이 null 인 그룹에 %s 재시도가 오면 등급을 저장하고 한 번 알림',
+    async (_name, retry) => {
+      // 전이 저장 뒤 조회 실패나 재시작으로 판정이 돌지 않은 그룹임
+      store.forEach((s) => {
+        s.status = 'COMPLETED';
+        s.stopReason = 'Natural';
+      });
+
+      await retry().expect(200);
+      await settle();
+      expect(store.map((s) => s.analysisTier)).toEqual(['VALID', 'VALID']);
+      expect(tierEvents()).toEqual(['VALID']);
+
+      // 같은 재시도가 두 번 동시에 다시 와도 판정과 알림은 한 번뿐임
+      await Promise.all([retry(), retry()]);
+      await settle();
+      expect(tierEvents()).toEqual(['VALID']);
+      expect(stopMeasurementService).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['VALID', true],
+    ['PARTIAL', false],
+  ])(
+    'legacy 엔진 미등록이면 비-DUAL_2PC 그룹의 %s 판정을 미루고 재등록 뒤 재시도에서 판정함',
+    async (tier, subject2Valid) => {
+      // 백엔드 재시작 뒤 엔진 heartbeat 재등록 전이라 legacy slot 이 빔
+      const legacyUrl = jest
+        .spyOn(engineRegistryService, 'getEngineUrl')
+        .mockImplementation(() => {
+          throw new Error('파이썬 데이터 엔진이 아직 등록되지 않았습니다.');
+        });
+      validBySubject[2] = subject2Valid;
+      engineRegistryService.cleanupGroup(GROUP_ID);
+      store.forEach((s) => {
+        s.status = 'COMPLETED';
+        s.stopReason = 'Natural';
+        s.experimentMode = 'BTI';
+      });
+
+      await stopAll().expect(200);
+      await settle();
+      // 등급을 소비하지 않아야 파이프라인 503 이 ABORTED 로 덮지 않음
+      expect(store.map((s) => s.analysisTier)).toEqual([null, null]);
+      expect(tierEvents()).toEqual([]);
+
+      // 엔진이 재등록한 뒤의 재시도는 정상 판정함
+      legacyUrl.mockReturnValue('http://legacy-engine');
+      await stopAll().expect(200);
+      await settle();
+      legacyUrl.mockRestore();
+      expect(store.map((s) => s.analysisTier)).toEqual([tier, tier]);
+      expect(tierEvents()).toEqual([tier]);
+    }
+  );
+
+  it('등급이 null 인 그룹에 재시도가 동시에 와도 판정과 알림은 한 번임', async () => {
+    store.forEach((s) => (s.status = 'COMPLETED'));
+
+    await Promise.all([stopAll(), upload(1), upload(2), streamStop(2)]);
+    await settle();
+
+    expect(store.map((s) => s.analysisTier)).toEqual(['VALID', 'VALID']);
+    expect(tierEvents()).toEqual(['VALID']);
+  });
+
   it('stop-all 은 진행 중인 업로드 전이가 끝난 뒤 재조회해 끝난 subject 에 streamStop 을 보내지 않음', async () => {
     // subject 1 은 이미 자연 종료됨. subject 2 업로드의 전이가 잠금 안에서
     // 진행 중일 때 stop-all 이 들어옴
