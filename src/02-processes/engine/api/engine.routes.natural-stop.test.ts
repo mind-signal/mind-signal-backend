@@ -25,6 +25,7 @@ interface FakeSession {
   analysisTier: string | null;
   experimentMode: string;
   measuredAt: Date | null;
+  canTransitionTo(next: string): boolean;
 }
 
 /** 기대 측정 시간(초)임 — config 모킹과 같은 값 */
@@ -235,6 +236,10 @@ describe('csv-upload 자연 종료와 stop-all 경합 (SESSION-W008)', () => {
         experimentMode: 'DUAL_2PC',
         // 기대 측정 시간을 채운 시작 시각임
         measuredAt: new Date(Date.now() - (EXPECTED_SECONDS + 1) * 1000),
+        // 실제 전이 규칙처럼 MEASURING 만 COMPLETED 로 갈 수 있음
+        canTransitionTo(next: string) {
+          return next === 'COMPLETED' && this.status === 'MEASURING';
+        },
       });
     }
     engineRegistryService.cleanupGroup(GROUP_ID);
