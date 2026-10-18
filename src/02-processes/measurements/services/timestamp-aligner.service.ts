@@ -158,10 +158,10 @@ class TimestampAligner {
    * - 매칭 실패 샘플은 soloWaitMs 초과 대기 시 상대를 null 로 두고 단독 emit
    * - 정렬된 쌍은 SocketService.emitToGroup(groupId, 'aligned_pair', alignedSample) 전송
    *
+   * @param now - 대기 판정 기준 시각. Infinity면 남은 미매칭 샘플을 모두 단독 emit함 (정지용)
    * @returns 정렬된 AlignedSample 배열
    */
-  flush(): AlignedSample[] {
-    const now = Date.now();
+  flush(now = Date.now()): AlignedSample[] {
     const toleranceNs = BigInt(this.toleranceMs) * 1_000_000n;
     const aligned: AlignedSample[] = [];
 
@@ -384,6 +384,17 @@ export const timestampAlignerRegistry = {
     const aligner = registry.get(groupId);
     if (!aligner) return [];
     return aligner.flush();
+  },
+
+  /**
+   * 정지용 최종 flush. 남은 쌍은 쌍으로, 미매칭 샘플은 대기 시간과 무관하게
+   * 단독으로 emit함. cleanup 전에 호출해야 버퍼가 조용히 버려지지 않음 (EEG-W008)
+   *
+   * @param groupId - 실험 그룹 ID
+   * @returns emit 된 AlignedSample 배열
+   */
+  drain(groupId: string): AlignedSample[] {
+    return registry.get(groupId)?.flush(Number.POSITIVE_INFINITY) ?? [];
   },
 
   /**

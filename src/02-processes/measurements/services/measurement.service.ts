@@ -680,18 +680,23 @@ export const stopMeasurementService = async (
   // 비-DUAL_2PC legacy 경로(BTI)는 subject별 emit 유지 (v2 N-3 반영)
   if (session.experimentMode === 'DUAL_2PC') {
     if (allCompleted) {
+      // subscribeWithAligner가 생성한 Redis subscriber 2개 + flush interval 전부 해제.
+      // 최종 flush 전에 먼저 끊어 interval flush와 겹치지 않고, 해제 중 도착한
+      // 샘플도 aligner에 남아 최종 flush에 포함됨 (EEG-W008)
+      await unsubscribeGroupChannels(session.groupId);
+      // 짝을 기다리던 샘플을 버리지 않고 내보낸 뒤 제거함. FE는
+      // measurement-complete 수신 시 aligned_pair 리스너를 떼므로 그 전에 emit함
+      timestampAlignerRegistry.drain(session.groupId);
+      timestampAlignerRegistry.cleanup(session.groupId);
       // 두 subject 모두 COMPLETED일 때만 1회 emit
       SocketService.emitToGroup(session.groupId, 'measurement-complete', {
         ...payload,
         sessionId: session._id,
       });
-      timestampAlignerRegistry.cleanup(session.groupId);
       engineRegistryService.cleanupGroup(session.groupId);
       // registry-status 캐시(ready=true)는 GC 30분까지 남아, 종료된 그룹을
       // 새로고침으로 복원한 운영자 화면에 `실험 시작`이 다시 뜸 (2026-09-07)
       dualTriggerService.resetStatus(session.groupId);
-      // subscribeWithAligner가 생성한 Redis subscriber 2개 + flush interval 전부 해제
-      await unsubscribeGroupChannels(session.groupId);
     }
     // 첫 subject stop 시점에는 emit 생략 (UI는 "partner 측정 중" 상태 유지)
   } else {

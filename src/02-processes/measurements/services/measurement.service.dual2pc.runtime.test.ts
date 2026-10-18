@@ -108,6 +108,7 @@ jest.mock(
       getOrCreate: jest.fn(),
       ingest: jest.fn(),
       flush: jest.fn(),
+      drain: jest.fn(),
       cleanup: jest.fn(),
     },
   })
